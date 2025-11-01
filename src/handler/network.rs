@@ -183,6 +183,7 @@ pub struct NetworkManager {
     credentials: Option<Credentials>,
     // unused atm for remote connections, needs to be used for self launches.
     user_request_interception_enabled: bool,
+    block_all: bool,
     protocol_request_interception_enabled: bool,
     /// The network is offline.
     offline: bool,
@@ -221,6 +222,7 @@ impl NetworkManager {
             user_cache_disabled: false,
             attempted_authentications: Default::default(),
             credentials: None,
+            block_all: false,
             user_request_interception_enabled: false,
             protocol_request_interception_enabled: false,
             offline: false,
@@ -275,6 +277,10 @@ impl NetworkManager {
 
     pub fn set_service_worker_enabled(&mut self, bypass: bool) {
         self.push_cdp_request(SetBypassServiceWorkerParams::new(bypass));
+    }
+
+    pub fn set_block_all(&mut self, block_all: bool) {
+        self.block_all = block_all;
     }
 
     pub fn set_request_interception(&mut self, enabled: bool) {
@@ -446,7 +452,15 @@ impl NetworkManager {
         }
 
         if !self.user_request_interception_enabled && self.protocol_request_interception_enabled {
-            self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
+            if self.block_all {
+                let fullfill_params = crate::handler::network::fetch::FulfillRequestParams::new(
+                    event.request_id.clone(),
+                    200,
+                );
+                self.push_cdp_request(fullfill_params);
+            } else {
+                self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
+            }
         } else {
             if let Some(network_id) = event.network_id.as_ref() {
                 if let Some(request_will_be_sent) =
@@ -462,8 +476,8 @@ impl NetworkManager {
                             || event.resource_type == ResourceType::Fetch
                             || event.resource_type == ResourceType::WebSocket);
 
-                    let skip_networking =
-                        IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
+                    let skip_networking = self.block_all
+                        || IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
 
                     let skip_networking = skip_networking || self.document_reload_tracker >= 3;
                     let mut replacer = None;
@@ -623,7 +637,15 @@ impl NetworkManager {
         }
 
         if !self.user_request_interception_enabled && self.protocol_request_interception_enabled {
-            self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
+            if self.block_all {
+                let fullfill_params = crate::handler::network::fetch::FulfillRequestParams::new(
+                    event.request_id.clone(),
+                    200,
+                );
+                self.push_cdp_request(fullfill_params);
+            } else {
+                self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
+            }
         } else {
             if let Some(network_id) = event.network_id.as_ref() {
                 if let Some(request_will_be_sent) =
@@ -641,8 +663,8 @@ impl NetworkManager {
                     let mut replacer = None;
 
                     // block all of these events.
-                    let skip_networking =
-                        IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
+                    let skip_networking = self.block_all
+                        || IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
 
                     let skip_networking = skip_networking || self.document_reload_tracker >= 3;
 

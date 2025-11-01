@@ -1,14 +1,14 @@
 [package]
-name = "spider_chrome"
-version = "2.37.129"
+name = "chromey"
+version = "2.37.131"
 rust-version = "1.70"
 authors = ["j-mendez <jeff@spider.cloud>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-homepage = "https://github.com/spider-rs/spider_chrome"
-repository = "https://github.com/spider-rs/spider_chrome"
-description = "The chrome devtools protocol automation library for Rust"
+homepage = "https://github.com/spider-rs/chromey"
+repository = "https://github.com/spider-rs/chromey"
+description = "Concurrent chrome devtools protocol automation library for Rust"
 keywords = ["chrome", "cdp", "puppeteer", "automation"]
 categories = ["web-programming", "api-bindings", "development-tools::testing"]
 

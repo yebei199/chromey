@@ -978,6 +978,68 @@ impl Page {
         Ok(self)
     }
 
+    /// Performs a back mouse click event at the point's location.
+    ///
+    /// This scrolls the point into view first, then executes a
+    /// `DispatchMouseEventParams` command of type `MouseBack` with
+    /// `MousePressed` as single click and then releases the mouse with an
+    /// additional `DispatchMouseEventParams` of type `MouseBack` with
+    /// `MouseReleased`
+    ///
+    /// Bear in mind that if `click()` triggers a navigation the new page is not
+    /// immediately loaded when `click()` resolves. To wait until navigation is
+    /// finished an additional `wait_for_navigation()` is required:
+    ///
+    /// # Example
+    ///
+    /// Trigger a navigation and wait until the triggered navigation is finished
+    ///
+    /// ```no_run
+    /// # use chromiumoxide::page::Page;
+    /// # use chromiumoxide::error::Result;
+    /// # use chromiumoxide::layout::Point;
+    /// # async fn demo(page: Page, point: Point) -> Result<()> {
+    ///     let html = page.back_click(point).await?.wait_for_navigation().await?.content();
+    ///     # Ok(())
+    /// # }
+    /// ```
+    /// ```
+    pub async fn back_click(&self, point: Point) -> Result<&Self> {
+        self.inner.back_click(point).await?;
+        Ok(self)
+    }
+
+    /// Performs a forward mouse click event at the point's location.
+    ///
+    /// This scrolls the point into view first, then executes a
+    /// `DispatchMouseEventParams` command of type `MouseForward` with
+    /// `MousePressed` as single click and then releases the mouse with an
+    /// additional `DispatchMouseEventParams` of type `MouseForward` with
+    /// `MouseReleased`
+    ///
+    /// Bear in mind that if `click()` triggers a navigation the new page is not
+    /// immediately loaded when `click()` resolves. To wait until navigation is
+    /// finished an additional `wait_for_navigation()` is required:
+    ///
+    /// # Example
+    ///
+    /// Trigger a navigation and wait until the triggered navigation is finished
+    ///
+    /// ```no_run
+    /// # use chromiumoxide::page::Page;
+    /// # use chromiumoxide::error::Result;
+    /// # use chromiumoxide::layout::Point;
+    /// # async fn demo(page: Page, point: Point) -> Result<()> {
+    ///     let html = page.forward_click(point).await?.wait_for_navigation().await?.content();
+    ///     # Ok(())
+    /// # }
+    /// ```
+    /// ```
+    pub async fn forward_click(&self, point: Point) -> Result<&Self> {
+        self.inner.forward_click(point).await?;
+        Ok(self)
+    }
+
     /// Performs a single mouse click event at the point's location with the modifier: Alt=1, Ctrl=2, Meta/Command=4, Shift=8\n(default: 0).
     ///
     /// This scrolls the point into view first, then executes a
@@ -1540,6 +1602,20 @@ impl Page {
     /// Enables runtime domain. Activated by default.
     pub async fn enable_runtime(&self) -> Result<&Self> {
         self.execute(js_protocol::runtime::EnableParams::default())
+            .await?;
+        Ok(self)
+    }
+
+    /// Enables the network.
+    pub async fn enable_network(&self) -> Result<&Self> {
+        self.execute(browser_protocol::network::EnableParams::default())
+            .await?;
+        Ok(self)
+    }
+
+    /// Disables the network.
+    pub async fn disable_network(&self) -> Result<&Self> {
+        self.execute(browser_protocol::network::DisableParams::default())
             .await?;
         Ok(self)
     }

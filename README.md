@@ -1,7 +1,7 @@
-# spider_chrome
+# chromey
 
-[![Crates.io](https://img.shields.io/crates/v/spider_chrome.svg)](https://crates.io/crates/spider_chrome)
-[![Documentation](https://docs.rs/spider_chrome/badge.svg)](https://docs.rs/spider_chrome)
+[![Crates.io](https://img.shields.io/crates/v/chromey.svg)](https://crates.io/crates/chromey)
+[![Documentation](https://docs.rs/chromey/badge.svg)](https://docs.rs/chromey)
 
 A concurrent high-level API to control Chrome or Firefox over the DevTools Protocol.
 
@@ -64,12 +64,12 @@ pub async fn pdf(&self, params: PrintToPdfParams) -> Result<Vec<u8>> {
 
 If you need something else, the `Page::execute` function allows for writing your own command wrappers. PRs are very welcome if you think a meaningful command is missing a designated function.
 
-### Add spider_chrome to your project
+### Add chromey to your project
 
-`spider_chrome` comes with support for [`tokio`](https://github.com/tokio-rs/tokio) runtime. 
+`chromey` comes with support for [`tokio`](https://github.com/tokio-rs/tokio) runtime. 
 
 ```toml
-spider_chrome = { version = "2", default-features = false }
+chromey = { version = "2", default-features = false }
 ```
 
 This configuration is made possible primarily by the websocket crate of choice: [`tokio-tungstenite`](https://github.com/snapview/tokio-tungstenite/tree/master).
@@ -86,7 +86,7 @@ All Events are bundled in single enum (`CdpEvent`)
 
 ## Fetcher
 
-By default `spider_chrome` will try to find an installed version of chromium on the computer it runs on.
+By default `chromey` will try to find an installed version of chromium on the computer it runs on.
 It is possible to download and install one automatically for some platforms using the `fetcher`.
 
 Ther features are currently a bit messy due to a Cargo bug and will be changed once it is resolved.

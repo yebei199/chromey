@@ -421,6 +421,16 @@ impl PageInner {
         self.middle_click_with_count(point, 1, 0).await
     }
 
+    /// Performs a mouse back click event at the point's location
+    pub async fn back_click(&self, point: Point) -> Result<&Self> {
+        self.back_click_with_count(point, 1, 0).await
+    }
+
+    /// Performs a mouse forward click event at the point's location
+    pub async fn forward_click(&self, point: Point) -> Result<&Self> {
+        self.forward_click_with_count(point, 1, 0).await
+    }
+
     /// Performs a mouse click event at the point's location and modifier: Alt=1, Ctrl=2, Meta/Command=4, Shift=8\n(default: 0).
     pub async fn click_with_modifier(
         &self,
