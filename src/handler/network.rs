@@ -181,10 +181,9 @@ pub struct NetworkManager {
     user_cache_disabled: bool,
     attempted_authentications: HashSet<RequestId>,
     credentials: Option<Credentials>,
-    // unused atm for remote connections, needs to be used for self launches.
-    user_request_interception_enabled: bool,
+    pub(crate) user_request_interception_enabled: bool,
     block_all: bool,
-    protocol_request_interception_enabled: bool,
+    pub(crate) protocol_request_interception_enabled: bool,
     /// The network is offline.
     offline: bool,
     /// The page request timeout.
@@ -450,17 +449,14 @@ impl NetworkManager {
         if self.user_request_interception_enabled && self.protocol_request_interception_enabled {
             return;
         }
-
-        if !self.user_request_interception_enabled && self.protocol_request_interception_enabled {
-            if self.block_all {
-                let fullfill_params = crate::handler::network::fetch::FulfillRequestParams::new(
-                    event.request_id.clone(),
-                    200,
-                );
-                self.push_cdp_request(fullfill_params);
-            } else {
-                self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
-            }
+        if self.block_all {
+            use chromiumoxide_cdp::cdp::browser_protocol::network::ErrorReason;
+            tracing::debug!("Blocked: {:?} - {}", event.resource_type, event.request.url);
+            let fullfill_params = crate::handler::network::fetch::FailRequestParams::new(
+                event.request_id.clone(),
+                ErrorReason::BlockedByClient,
+            );
+            self.push_cdp_request(fullfill_params);
         } else {
             if let Some(network_id) = event.network_id.as_ref() {
                 if let Some(request_will_be_sent) =
@@ -636,16 +632,14 @@ impl NetworkManager {
             return;
         }
 
-        if !self.user_request_interception_enabled && self.protocol_request_interception_enabled {
-            if self.block_all {
-                let fullfill_params = crate::handler::network::fetch::FulfillRequestParams::new(
-                    event.request_id.clone(),
-                    200,
-                );
-                self.push_cdp_request(fullfill_params);
-            } else {
-                self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
-            }
+        if self.block_all {
+            use chromiumoxide_cdp::cdp::browser_protocol::network::ErrorReason;
+            tracing::debug!("Blocked: {:?} - {}", event.resource_type, event.request.url);
+            let fullfill_params = crate::handler::network::fetch::FailRequestParams::new(
+                event.request_id.clone(),
+                ErrorReason::BlockedByClient,
+            );
+            self.push_cdp_request(fullfill_params);
         } else {
             if let Some(network_id) = event.network_id.as_ref() {
                 if let Some(request_will_be_sent) =

@@ -345,7 +345,6 @@ impl Target {
                     }
                 }
             }
-
             // `NetworkManager` events
             CdpEvent::FetchRequestPaused(ev) => self.network_manager.on_fetch_request_paused(ev),
             CdpEvent::FetchAuthRequired(ev) => self.network_manager.on_fetch_auth_required(ev),
@@ -523,6 +522,29 @@ impl Target {
 
                     match msg {
                         TargetMessage::Command(cmd) => {
+                            if cmd.method == "Network.setBlockedURLs" {
+                                if let Some(arr) = cmd.params.get("urls").and_then(|v| v.as_array())
+                                {
+                                    let mut unblock_all = false;
+                                    let mut block_all = false;
+
+                                    for s in arr.iter().filter_map(|v| v.as_str()) {
+                                        if s == "!*" {
+                                            unblock_all = true;
+                                            break; // "!*" overrides any block rules
+                                        }
+                                        if s.contains('*') {
+                                            block_all = true;
+                                        }
+                                    }
+
+                                    if unblock_all {
+                                        self.network_manager.set_block_all(false);
+                                    } else if block_all {
+                                        self.network_manager.set_block_all(true);
+                                    }
+                                }
+                            }
                             self.queued_events.push_back(TargetEvent::Command(cmd));
                         }
                         TargetMessage::MainFrame(tx) => {
