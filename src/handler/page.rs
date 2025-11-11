@@ -72,9 +72,13 @@ impl PageHandle {
 
 #[derive(Debug)]
 pub(crate) struct PageInner {
+    /// The page target ID.
     target_id: TargetId,
+    /// The session ID.
     session_id: SessionId,
+    /// The opener ID.
     opener_id: Option<TargetId>,
+    /// The sender for the target.
     sender: Sender<TargetMessage>,
 }
 

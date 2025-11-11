@@ -10,6 +10,10 @@ use std::task::{Context, Poll};
 use crate::handler::target::TargetMessage;
 use crate::{error::Result, ArcHttpRequest};
 
+/// Convenience alias for sending messages to a Target task/actor.
+///
+/// This channel is typically owned by the Target event loop and accepts
+/// `TargetMessage` commands to be processed serially.
 type TargetSender = mpsc::Sender<TargetMessage>;
 
 pin_project! {
@@ -56,7 +60,6 @@ impl<T> Future for TargetMessageFuture<T> {
                 Poll::Ready(Ok(_)) => {
                     let message = this.message.take().expect("existence checked above");
                     this.target_sender.start_send(message)?;
-
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }

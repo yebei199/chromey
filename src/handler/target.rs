@@ -119,7 +119,7 @@ pub struct Target {
     /// navigations of frames
     frame_manager: FrameManager,
     /// Handles all the https
-    network_manager: NetworkManager,
+    pub(crate) network_manager: NetworkManager,
     emulation_manager: EmulationManager,
     /// The identifier of the session this target is attached to
     session_id: Option<SessionId>,
@@ -142,7 +142,7 @@ impl Target {
     /// `CreateTargetParams` request.
     pub fn new(info: TargetInfo, config: TargetConfig, browser_context: BrowserContext) -> Self {
         let ty = TargetType::new(&info.r#type);
-        let request_timeout = config.request_timeout;
+        let request_timeout: Duration = config.request_timeout;
         let mut network_manager = NetworkManager::new(config.ignore_https_errors, request_timeout);
 
         if !config.cache_enabled {
@@ -154,6 +154,7 @@ impl Target {
         }
 
         network_manager.set_request_interception(config.request_intercept);
+        network_manager.max_bytes_allowed = config.max_bytes_allowed;
 
         if let Some(ref headers) = config.extra_headers {
             network_manager.set_extra_headers(headers.clone());
@@ -184,20 +185,24 @@ impl Target {
         }
     }
 
+    /// Set the session id.
     pub fn set_session_id(&mut self, id: SessionId) {
         self.session_id = Some(id)
     }
 
+    /// Get the session id.
     pub fn session_id(&self) -> Option<&SessionId> {
         self.session_id.as_ref()
     }
 
-    pub fn browser_context(&self) -> &BrowserContext {
-        &self.browser_context
-    }
-
+    /// Get the session id mut.
     pub fn session_id_mut(&mut self) -> &mut Option<SessionId> {
         &mut self.session_id
+    }
+
+    /// Get the browser context.
+    pub fn browser_context(&self) -> &BrowserContext {
+        &self.browser_context
     }
 
     /// The identifier for this target
@@ -220,6 +225,7 @@ impl Target {
         self.frame_manager.goto(req)
     }
 
+    /// Create a new page from the session.
     fn create_page(&mut self) {
         if self.page.is_none() {
             if let Some(session) = self.session_id.clone() {
@@ -660,6 +666,9 @@ impl Target {
                     NetworkEvent::RequestFinished(request) => {
                         self.frame_manager.on_http_request_finished(request);
                     }
+                    NetworkEvent::BytesConsumed(n) => {
+                        self.queued_events.push_back(TargetEvent::BytesConsumed(n));
+                    }
                 }
             }
 
@@ -712,6 +721,8 @@ pub struct TargetConfig {
     pub service_worker_enabled: bool,
     pub extra_headers: Option<std::collections::HashMap<String, String>>,
     pub intercept_manager: NetworkInterceptManager,
+    /// The max bytes to receive.
+    pub max_bytes_allowed: Option<u64>,
 }
 
 impl Default for TargetConfig {
@@ -730,6 +741,7 @@ impl Default for TargetConfig {
             only_html: false,
             extra_headers: Default::default(),
             intercept_manager: NetworkInterceptManager::Unknown,
+            max_bytes_allowed: None,
         }
     }
 }
@@ -799,6 +811,8 @@ pub(crate) enum TargetEvent {
     NavigationResult(Result<NavigationOk, NavigationError>),
     /// A new command arrived via a channel
     Command(CommandMessage),
+    /// The bytes consumed by the network.
+    BytesConsumed(u64),
 }
 
 // TODO this can be moved into the classes?

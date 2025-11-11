@@ -164,6 +164,7 @@ impl Browser {
             only_html: config.only_html,
             service_worker_enabled: config.service_worker_enabled,
             intercept_manager: config.intercept_manager,
+            max_bytes_allowed: config.max_bytes_allowed,
             ..Default::default()
         };
 
@@ -250,6 +251,7 @@ impl Browser {
             service_worker_enabled: config.service_worker_enabled,
             created_first_target: false,
             intercept_manager: config.intercept_manager,
+            max_bytes_allowed: config.max_bytes_allowed,
         };
 
         let fut = Handler::new(conn, rx, handler_config);
@@ -715,41 +717,44 @@ pub struct BrowserConfig {
     /// Data dir for user data
     pub user_data_dir: Option<PathBuf>,
 
-    /// Whether to launch the `Browser` in incognito mode
+    /// Whether to launch the `Browser` in incognito mode.
     incognito: bool,
 
     /// Timeout duration for `Browser::launch`.
     launch_timeout: Duration,
 
-    /// Ignore https errors, default is true
+    /// Ignore https errors, default is true.
     ignore_https_errors: bool,
     pub viewport: Option<Viewport>,
-    /// The duration after a request with no response should time out
+    /// The duration after a request with no response should time out.
     request_timeout: Duration,
 
     /// Additional command line arguments to pass to the browser instance.
     args: Vec<String>,
 
-    /// Whether to disable DEFAULT_ARGS or not, default is false
+    /// Whether to disable DEFAULT_ARGS or not, default is false.
     disable_default_args: bool,
 
-    /// Whether to enable request interception
+    /// Whether to enable request interception.
     pub request_intercept: bool,
 
     /// Whether to enable cache.
     pub cache_enabled: bool,
-    /// Whether to enable/disable service workers.
+    /// Whether to enable or disable Service Workers.
+    /// Disabling may reduce background network activity and caching effects.
     pub service_worker_enabled: bool,
-
-    /// Whether to ignore visuals when request interception is enabled.
+    /// Whether to ignore image/visual requests during interception.
+    /// Can reduce bandwidth and speed up crawling when visuals are unnecessary.
     pub ignore_visuals: bool,
-    /// Whether to ignore stylesheets when request interception is enabled.
+    /// Whether to ignore stylesheet (CSS) requests during interception.
+    /// Useful for content-only crawls.
     pub ignore_stylesheets: bool,
-    /// Whether to ignore javascript when request interception is enabled. This will allow framework JS like react to go through.
+    /// Whether to ignore JavaScript requests during interception.
+    /// This still allows critical framework bundles to pass when applicable.
     pub ignore_javascript: bool,
-    /// Whether to ignore analytics when request interception is enabled.
+    /// Whether to ignore analytics/telemetry requests during interception.
     pub ignore_analytics: bool,
-    /// Whether to ignore ads when request interception is enabled.
+    /// Whether to ignore ad network requests during interception.
     pub ignore_ads: bool,
     /// Extra headers.
     pub extra_headers: Option<std::collections::HashMap<String, String>>,
@@ -757,44 +762,78 @@ pub struct BrowserConfig {
     pub only_html: bool,
     /// The interception intercept manager.
     pub intercept_manager: NetworkInterceptManager,
+    /// The max bytes to receive.
+    pub max_bytes_allowed: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BrowserConfigBuilder {
+    /// Headless mode configuration for the browser.
     headless: HeadlessMode,
+    /// Whether to run the browser with a sandbox.
     sandbox: bool,
+    /// Optional initial browser window size `(width, height)`.
     window_size: Option<(u32, u32)>,
+    /// DevTools debugging port to bind to.
     port: u16,
+    /// Optional explicit path to the Chrome/Chromium executable.
+    /// If `None`, auto-detection may be attempted based on `executation_detection`.
     executable: Option<PathBuf>,
+    /// Controls auto-detection behavior for finding a Chrome/Chromium binary.
     executation_detection: DetectionOptions,
+    /// List of unpacked extensions (directories) to load at startup.
     extensions: Vec<String>,
+    /// Environment variables to set on the spawned Chromium process.
     process_envs: Option<HashMap<String, String>>,
+    /// User data directory to persist browser state, or `None` for ephemeral.
     user_data_dir: Option<PathBuf>,
+    /// Whether to start the browser in incognito (off-the-record) mode.
     incognito: bool,
+    /// Maximum time to wait for the browser to launch and become ready.
     launch_timeout: Duration,
+    /// Whether to ignore HTTPS/TLS errors during navigation and requests.
     ignore_https_errors: bool,
+    /// Default page viewport configuration applied on startup.
     viewport: Option<Viewport>,
+    /// Timeout for individual network requests without response progress.
     request_timeout: Duration,
+    /// Additional command-line flags passed directly to the browser process.
     args: Vec<String>,
+    /// Disable the default argument set and use only the provided `args`.
     disable_default_args: bool,
+    /// Enable Network.requestInterception for request filtering/handling.
     request_intercept: bool,
+    /// Enable the browser cache for navigations and subresources.
     cache_enabled: bool,
+    /// Enable/disable Service Workers.
     service_worker_enabled: bool,
+    /// Drop image/visual requests when interception is enabled.
     ignore_visuals: bool,
+    /// Drop ad network requests when interception is enabled.
     ignore_ads: bool,
+    /// Drop JavaScript requests when interception is enabled.
     ignore_javascript: bool,
+    /// Drop stylesheet (CSS) requests when interception is enabled.
     ignore_stylesheets: bool,
+    /// Drop analytics/telemetry requests when interception is enabled.
     ignore_analytics: bool,
+    /// If `true`, limit fetching to HTML documents.
     only_html: bool,
+    /// Extra HTTP headers to include with every request.
     extra_headers: Option<std::collections::HashMap<String, String>>,
+    /// Network interception manager used to configure filtering behavior.
     intercept_manager: NetworkInterceptManager,
+    /// Optional upper bound on bytes that may be received (per session/run).
+    max_bytes_allowed: Option<u64>,
 }
 
 impl BrowserConfig {
+    /// Browser builder default config.
     pub fn builder() -> BrowserConfigBuilder {
         BrowserConfigBuilder::default()
     }
 
+    /// Launch with the executable path.
     pub fn with_executable(path: impl AsRef<Path>) -> Self {
         Self::builder()
             .chrome_executable(path)
@@ -833,36 +872,38 @@ impl Default for BrowserConfigBuilder {
             extra_headers: Default::default(),
             service_worker_enabled: true,
             intercept_manager: NetworkInterceptManager::Unknown,
+            max_bytes_allowed: None,
         }
     }
 }
 
 impl BrowserConfigBuilder {
+    /// Configure window size.
     pub fn window_size(mut self, width: u32, height: u32) -> Self {
         self.window_size = Some((width, height));
         self
     }
-
+    /// Configure sandboxing.
     pub fn no_sandbox(mut self) -> Self {
         self.sandbox = false;
         self
     }
-
+    /// Configure the launch to start non headless.
     pub fn with_head(mut self) -> Self {
         self.headless = HeadlessMode::False;
         self
     }
-
+    /// Configure the launch with the new headless mode.
     pub fn new_headless_mode(mut self) -> Self {
         self.headless = HeadlessMode::New;
         self
     }
-
+    /// Configure the launch with headless.
     pub fn headless_mode(mut self, mode: HeadlessMode) -> Self {
         self.headless = mode;
         self
     }
-
+    /// Configure the launch in incognito.
     pub fn incognito(mut self) -> Self {
         self.incognito = true;
         self
@@ -875,6 +916,11 @@ impl BrowserConfigBuilder {
 
     pub fn port(mut self, port: u16) -> Self {
         self.port = port;
+        self
+    }
+
+    pub fn with_max_bytes_allowed(mut self, max_bytes_allowed: Option<u64>) -> Self {
+        self.max_bytes_allowed = max_bytes_allowed;
         self
     }
 
@@ -1036,6 +1082,7 @@ impl BrowserConfigBuilder {
             only_html: self.only_html,
             intercept_manager: self.intercept_manager,
             service_worker_enabled: self.service_worker_enabled,
+            max_bytes_allowed: self.max_bytes_allowed,
         })
     }
 }

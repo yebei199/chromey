@@ -207,6 +207,8 @@ pub struct NetworkManager {
     pub document_reload_tracker: u8,
     /// The initial target domain.
     pub document_target_domain: String,
+    /// The max bytes to receive.
+    pub max_bytes_allowed: Option<u64>,
 }
 
 impl NetworkManager {
@@ -235,6 +237,7 @@ impl NetworkManager {
             intercept_manager: NetworkInterceptManager::Unknown,
             document_reload_tracker: 0,
             document_target_domain: String::new(),
+            max_bytes_allowed: None,
         }
     }
 
@@ -930,11 +933,62 @@ impl NetworkManager {
         }
     }
 
+    /// On network response received.
     pub fn on_response_received(&mut self, event: &EventResponseReceived) {
+        let mut request_failed = false;
+
+        // Track how many bytes we actually deducted from this target
+        let mut deducted: u64 = 0;
+
+        if let Some(max_bytes) = self.max_bytes_allowed.as_mut() {
+            let before = *max_bytes;
+
+            // encoded_data_length -> saturating cast to u64
+            let received_bytes: u64 = event.response.encoded_data_length as u64;
+
+            // Safe parse of Content-Length
+            let content_length: Option<u64> = event
+                .response
+                .headers
+                .inner()
+                .get("content-length")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.trim().parse::<u64>().ok());
+
+            // Deduct what we actually received
+            *max_bytes = max_bytes.saturating_sub(received_bytes);
+
+            // If the declared size can't fit, zero out now
+            if let Some(cl) = content_length {
+                if cl > *max_bytes {
+                    *max_bytes = 0;
+                }
+            }
+
+            request_failed = *max_bytes == 0;
+
+            // Compute exact delta deducted on this event
+            deducted = before.saturating_sub(*max_bytes);
+        }
+
+        // Bubble up the deduction (even if request continues)
+        if deducted > 0 {
+            self.queued_events
+                .push_back(NetworkEvent::BytesConsumed(deducted));
+        }
+
+        // block all network request moving forward.
+        if request_failed && self.max_bytes_allowed.is_some() {
+            self.set_block_all(true);
+        }
+
         if let Some(mut request) = self.requests.remove(event.request_id.as_ref()) {
             request.set_response(event.response.clone());
-            self.queued_events
-                .push_back(NetworkEvent::RequestFinished(request))
+            self.queued_events.push_back(if request_failed {
+                NetworkEvent::RequestFailed(request)
+            } else {
+                NetworkEvent::RequestFinished(request)
+            });
         }
     }
 
@@ -1034,4 +1088,5 @@ pub enum NetworkEvent {
     Response(RequestId),
     RequestFailed(HttpRequest),
     RequestFinished(HttpRequest),
+    BytesConsumed(u64),
 }

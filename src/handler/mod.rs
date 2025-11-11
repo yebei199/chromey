@@ -85,6 +85,10 @@ pub struct Handler {
     event_listeners: EventListeners,
     /// Keeps track is the browser is closing
     closing: bool,
+    /// Track the bytes remainder until network request will be blocked.
+    remaining_bytes: Option<u64>,
+    /// The budget is exhausted.
+    budget_exhausted: bool,
 }
 
 lazy_static::lazy_static! {
@@ -137,6 +141,8 @@ impl Handler {
             config,
             event_listeners: Default::default(),
             closing: false,
+            remaining_bytes: None,
+            budget_exhausted: false,
         }
     }
 
@@ -471,6 +477,7 @@ impl Handler {
                 extra_headers: self.config.extra_headers.clone(),
                 only_html: self.config.only_html && self.config.created_first_target,
                 intercept_manager: self.config.intercept_manager,
+                max_bytes_allowed: self.config.max_bytes_allowed,
             },
             browser_ctx,
         );
@@ -639,6 +646,14 @@ impl Stream for Handler {
                             TargetEvent::NavigationResult(res) => {
                                 pin.on_navigation_lifecycle_completed(res)
                             }
+                            TargetEvent::BytesConsumed(n) => {
+                                if let Some(rem) = pin.remaining_bytes.as_mut() {
+                                    *rem = rem.saturating_sub(n);
+                                    if *rem == 0 {
+                                        pin.budget_exhausted = true;
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -697,6 +712,12 @@ impl Stream for Handler {
                 pin.evict_timed_out_commands(now);
             }
 
+            if pin.budget_exhausted {
+                for t in pin.targets.values_mut() {
+                    t.network_manager.set_block_all(true);
+                }
+            }
+
             if dispose {
                 return Poll::Ready(None);
             }
@@ -744,6 +765,8 @@ pub struct HandlerConfig {
     pub created_first_target: bool,
     /// The network intercept manager.
     pub intercept_manager: NetworkInterceptManager,
+    /// The max bytes to receive.
+    pub max_bytes_allowed: Option<u64>,
 }
 
 impl Default for HandlerConfig {
@@ -765,6 +788,7 @@ impl Default for HandlerConfig {
             extra_headers: Default::default(),
             created_first_target: false,
             intercept_manager: NetworkInterceptManager::Unknown,
+            max_bytes_allowed: None,
         }
     }
 }

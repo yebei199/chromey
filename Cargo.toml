@@ -1,6 +1,6 @@
 [package]
 name = "chromey"
-version = "2.37.141"
+version = "2.37.143"
 rust-version = "1.70"
 authors = ["j-mendez <jeff@spider.cloud>"]
 edition = "2021"
@@ -119,6 +119,9 @@ name = "httpfuture"
 
 [[example]]
 name = "connect"
+
+[[example]]
+name = "bytes-control"
 
 [[example]]
 name = "fetcher-tokio"

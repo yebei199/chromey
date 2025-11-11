@@ -8,12 +8,23 @@ use chromiumoxide::cdp::browser_protocol::page::NavigateParams;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let (browser, mut handler) =
-        Browser::launch(BrowserConfig::builder().with_head().build()?).await?;
+    let (browser, mut handler) = Browser::launch(
+        BrowserConfig::builder()
+            .enable_request_intercept()
+            .with_head()
+            .with_max_bytes_allowed(Some(900_000))
+            .disable_cache()
+            .build()?,
+    )
+    .await?;
 
     let handle = tokio::task::spawn(async move {
         loop {
-            let _ = handler.next().await.unwrap();
+            if let Some(e) = handler.next().await {
+                println!("{:?}", e);
+            } else {
+                break;
+            }
         }
     });
 
@@ -34,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _html = page.wait_for_navigation().await?.content().await?;
 
-    // println!("{:?}", _html);
+    println!("{:?}", _html);
 
     handle.await?;
     Ok(())

@@ -1934,6 +1934,7 @@ impl Page {
         max_bytes: u64,
         close_on_exceed: Option<bool>,
         enable_networking: Option<bool>,
+        sent_and_received: Option<bool>,
     ) -> Result<tokio::task::JoinHandle<()>> {
         // prevent re-enabling the network - by default this should be enabled.
         if enable_networking.unwrap_or(false) {
@@ -1941,6 +1942,7 @@ impl Page {
         }
 
         let close_on_exceed = close_on_exceed.unwrap_or_default();
+        let track_all = sent_and_received.unwrap_or_default();
 
         let mut rx = self
             .event_listener::<crate::page::browser_protocol::network::EventDataReceived>()
@@ -1953,7 +1955,13 @@ impl Page {
             let mut total_bytes: u64 = 0;
 
             while let Some(ev) = rx.next().await {
-                total_bytes = total_bytes.saturating_add(ev.encoded_data_length.max(0) as u64);
+                let encoded = ev.encoded_data_length.max(0) as u64;
+                let data_length = if track_all {
+                    ev.data_length.max(0) as u64
+                } else {
+                    0
+                };
+                total_bytes = total_bytes.saturating_add(encoded + data_length);
                 if total_bytes > max_bytes {
                     let _ = page.force_stop_all().await;
                     if close_on_exceed {
@@ -2376,8 +2384,11 @@ impl ScreenshotParams {
 /// Page screenshot parameters builder with extra options.
 #[derive(Debug, Default)]
 pub struct ScreenshotParamsBuilder {
+    /// The cdp params.
     cdp_params: CaptureScreenshotParams,
+    /// Full page screenshot?
     full_page: Option<bool>,
+    /// Hide the background.
     omit_background: Option<bool>,
 }
 
