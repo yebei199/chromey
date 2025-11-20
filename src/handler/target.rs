@@ -294,6 +294,7 @@ impl Target {
         // can be ignored here
     }
 
+    /// On CDP Event message.
     pub fn on_event(&mut self, event: CdpEventMessage) {
         let CdpEventMessage { params, method, .. } = event;
 
@@ -705,23 +706,50 @@ impl Target {
     }
 }
 
+/// Configuration for how a single target/page should be fetched and processed.
 #[derive(Debug, Clone)]
 pub struct TargetConfig {
+    /// Whether to ignore TLS/HTTPS certificate errors (e.g. self-signed or expired certs).
+    /// When `true`, connections will proceed even if certificate validation fails.
     pub ignore_https_errors: bool,
-    ///  Request timeout to use
+    /// Request timeout to use for the main navigation / resource fetch.
+    /// This is the total time allowed before a request is considered failed.
     pub request_timeout: Duration,
+    /// Optional browser viewport to use for this target.
+    /// When `None`, the default viewport (or headless browser default) is used.
     pub viewport: Option<Viewport>,
+    /// Enable request interception for this target.
+    /// When `true`, all network requests will pass through the intercept manager.
     pub request_intercept: bool,
+    /// Enable caching for this target.
+    /// When `true`, responses may be read from and written to the cache layer.
     pub cache_enabled: bool,
+    /// If `true`, skip visual/asset resources that are not required for HTML content
+    /// (e.g. images, fonts, media). Useful for performance-oriented crawls.
     pub ignore_visuals: bool,
+    /// If `true`, block JavaScript execution (or avoid loading JS resources)
+    /// for this target. This is useful for purely static HTML crawls.
     pub ignore_javascript: bool,
+    /// If `true`, block analytics / tracking requests (e.g. Google Analytics,
+    /// common tracker domains, etc.).
     pub ignore_analytics: bool,
+    /// If `true`, block stylesheets and related CSS resources for this target.
+    /// This can reduce bandwidth when only raw HTML is needed.
     pub ignore_stylesheets: bool,
+    /// If `true`, only HTML documents will be fetched/kept.
+    /// Non-HTML subresources may be skipped entirely.
     pub only_html: bool,
+    /// Whether service workers are allowed for this target.
+    /// When `true`, service workers may register and intercept requests.
     pub service_worker_enabled: bool,
+    /// Extra HTTP headers to send with each request for this target.
+    /// Keys should be header names, values their corresponding header values.
     pub extra_headers: Option<std::collections::HashMap<String, String>>,
+    /// Network intercept manager used to make allow/deny/modify decisions
+    /// for requests when `request_intercept` is enabled.
     pub intercept_manager: NetworkInterceptManager,
-    /// The max bytes to receive.
+    /// The maximum number of response bytes allowed for this target.
+    /// When set, responses larger than this limit may be truncated or aborted.
     pub max_bytes_allowed: Option<u64>,
 }
 

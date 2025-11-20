@@ -12,7 +12,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
 use chromiumoxide_cdp::cdp::browser_protocol::input::{DispatchDragEventType, DragData};
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
     Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, SetBlockedUrLsParams,
-    SetCookiesParams, SetExtraHttpHeadersParams, SetUserAgentOverrideParams,
+    SetCookiesParams, SetExtraHttpHeadersParams, SetUserAgentOverrideParams, TimeSinceEpoch,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
 use chromiumoxide_cdp::cdp::browser_protocol::performance::{GetMetricsParams, Metric};
@@ -93,12 +93,12 @@ impl Page {
     pub async fn add_script_to_evaluate_immediately_on_new_document(
         &self,
         source: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<&Self> {
         if source.is_some() {
             let source = source.unwrap_or_default();
 
             if !source.is_empty() {
-                self.execute(AddScriptToEvaluateOnNewDocumentParams {
+                self.send_command(AddScriptToEvaluateOnNewDocumentParams {
                     source,
                     world_name: None,
                     include_command_line_api: None,
@@ -107,19 +107,19 @@ impl Page {
                 .await?;
             }
         }
-        Ok(())
+        Ok(self)
     }
 
     /// Add a custom script to eval on new document.
     pub async fn add_script_to_evaluate_on_new_document(
         &self,
         source: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<&Self> {
         if source.is_some() {
             let source = source.unwrap_or_default();
 
             if !source.is_empty() {
-                self.execute(AddScriptToEvaluateOnNewDocumentParams {
+                self.send_command(AddScriptToEvaluateOnNewDocumentParams {
                     source,
                     world_name: None,
                     include_command_line_api: None,
@@ -128,7 +128,7 @@ impl Page {
                 .await?;
             }
         }
-        Ok(())
+        Ok(self)
     }
 
     /// Removes the `navigator.webdriver` property
@@ -140,7 +140,7 @@ impl Page {
         config: &spider_fingerprint::EmulationConfiguration,
         viewport: &Option<&spider_fingerprint::spoof_viewport::Viewport>,
         custom_script: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<&Self> {
         let emulation_script = spider_fingerprint::emulate(
             &user_agent,
             &config,
@@ -162,7 +162,7 @@ impl Page {
         self.add_script_to_evaluate_on_new_document(Some(source))
             .await?;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Removes the `navigator.webdriver` property
@@ -173,7 +173,7 @@ impl Page {
         custom_script: Option<&str>,
         os: Option<AgentOs>,
         tier: Option<Tier>,
-    ) -> Result<()> {
+    ) -> Result<&Self> {
         let os = os.unwrap_or_default();
         let tier = match tier {
             Some(tier) => tier,
@@ -193,16 +193,16 @@ impl Page {
         self.add_script_to_evaluate_on_new_document(Some(source))
             .await?;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Changes your user_agent, removes the `navigator.webdriver` property
     /// changes permissions, pluggins rendering contexts and the `window.chrome`
     /// property to make it harder to detect the scraper as a bot
-    pub async fn enable_stealth_mode(&self) -> Result<()> {
+    pub async fn enable_stealth_mode(&self) -> Result<&Self> {
         let _ = self._enable_stealth_mode(None, None, None).await;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Changes your user_agent, removes the `navigator.webdriver` property
@@ -212,27 +212,27 @@ impl Page {
         &self,
         os: Option<AgentOs>,
         tier: Option<Tier>,
-    ) -> Result<()> {
+    ) -> Result<&Self> {
         let _ = self._enable_stealth_mode(None, os, tier).await;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Changes your user_agent with a custom agent, removes the `navigator.webdriver` property
     /// changes permissions, pluggins rendering contexts and the `window.chrome`
     /// property to make it harder to detect the scraper as a bot
-    pub async fn enable_stealth_mode_with_agent(&self, ua: &str) -> Result<()> {
+    pub async fn enable_stealth_mode_with_agent(&self, ua: &str) -> Result<&Self> {
         let _ = tokio::join!(
             self._enable_stealth_mode(None, None, None),
             self.set_user_agent(ua)
         );
-        Ok(())
+        Ok(self)
     }
 
     /// Changes your user_agent with a custom agent, removes the `navigator.webdriver` property
     /// changes permissions, pluggins rendering contexts and the `window.chrome`
     /// property to make it harder to detect the scraper as a bot. Also add dialog polyfill to prevent blocking the page.
-    pub async fn enable_stealth_mode_with_dimiss_dialogs(&self, ua: &str) -> Result<()> {
+    pub async fn enable_stealth_mode_with_dimiss_dialogs(&self, ua: &str) -> Result<&Self> {
         let _ = tokio::join!(
             self._enable_stealth_mode(
                 Some(spider_fingerprint::spoofs::DISABLE_DIALOGS),
@@ -241,13 +241,16 @@ impl Page {
             ),
             self.set_user_agent(ua)
         );
-        Ok(())
+        Ok(self)
     }
 
     /// Changes your user_agent with a custom agent, removes the `navigator.webdriver` property
     /// changes permissions, pluggins rendering contexts and the `window.chrome`
     /// property to make it harder to detect the scraper as a bot. Also add dialog polyfill to prevent blocking the page.
-    pub async fn enable_stealth_mode_with_agent_and_dimiss_dialogs(&self, ua: &str) -> Result<()> {
+    pub async fn enable_stealth_mode_with_agent_and_dimiss_dialogs(
+        &self,
+        ua: &str,
+    ) -> Result<&Self> {
         let _ = tokio::join!(
             self._enable_stealth_mode(
                 Some(spider_fingerprint::spoofs::DISABLE_DIALOGS),
@@ -256,7 +259,7 @@ impl Page {
             ),
             self.set_user_agent(ua)
         );
-        Ok(())
+        Ok(self)
     }
 
     /// Enable page Content Security Policy by-passing.
@@ -266,7 +269,7 @@ impl Page {
     }
 
     /// Sets `window.chrome` on frame creation and console.log methods.
-    pub async fn hide_chrome(&self) -> Result<(), CdpError> {
+    pub async fn hide_chrome(&self) -> Result<&Self, CdpError> {
         self.execute(AddScriptToEvaluateOnNewDocumentParams {
             source: spider_fingerprint::spoofs::HIDE_CHROME.to_string(),
             world_name: None,
@@ -274,11 +277,11 @@ impl Page {
             run_immediately: None,
         })
         .await?;
-        Ok(())
+        Ok(self)
     }
 
     /// Obfuscates WebGL vendor on frame creation
-    pub async fn hide_webgl_vendor(&self) -> Result<(), CdpError> {
+    pub async fn hide_webgl_vendor(&self) -> Result<&Self, CdpError> {
         self.execute(AddScriptToEvaluateOnNewDocumentParams {
             source: spider_fingerprint::spoofs::HIDE_WEBGL.to_string(),
             world_name: None,
@@ -286,11 +289,11 @@ impl Page {
             run_immediately: None,
         })
         .await?;
-        Ok(())
+        Ok(self)
     }
 
     /// Obfuscates browser plugins and hides the navigator object on frame creation
-    pub async fn hide_plugins(&self) -> Result<(), CdpError> {
+    pub async fn hide_plugins(&self) -> Result<&Self, CdpError> {
         self.execute(AddScriptToEvaluateOnNewDocumentParams {
             source: spider_fingerprint::generate_hide_plugins(),
             world_name: None,
@@ -299,11 +302,11 @@ impl Page {
         })
         .await?;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Obfuscates browser permissions on frame creation
-    pub async fn hide_permissions(&self) -> Result<(), CdpError> {
+    pub async fn hide_permissions(&self) -> Result<&Self, CdpError> {
         self.execute(AddScriptToEvaluateOnNewDocumentParams {
             source: spider_fingerprint::spoofs::HIDE_PERMISSIONS.to_string(),
             world_name: None,
@@ -311,11 +314,11 @@ impl Page {
             run_immediately: None,
         })
         .await?;
-        Ok(())
+        Ok(self)
     }
 
     /// Removes the `navigator.webdriver` property on frame creation
-    pub async fn hide_webdriver(&self) -> Result<(), CdpError> {
+    pub async fn hide_webdriver(&self) -> Result<&Self, CdpError> {
         self.execute(AddScriptToEvaluateOnNewDocumentParams {
             source: spider_fingerprint::spoofs::HIDE_WEBDRIVER.to_string(),
             world_name: None,
@@ -323,12 +326,18 @@ impl Page {
             run_immediately: None,
         })
         .await?;
-        Ok(())
+        Ok(self)
     }
 
     /// Execute a command and return the `Command::Response`
     pub async fn execute<T: Command>(&self, cmd: T) -> Result<CommandResponse<T::Response>> {
         self.command_future(cmd)?.await
+    }
+
+    /// Execute a command and return the `Command::Response`
+    pub async fn send_command<T: Command>(&self, cmd: T) -> Result<&Self> {
+        let _ = self.inner.send_command(cmd).await;
+        Ok(self)
     }
 
     /// Execute a command and return the `Command::Response`
@@ -458,7 +467,11 @@ impl Page {
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
     #[cfg(feature = "cache")]
-    pub async fn goto_with_cache(&self, params: impl Into<NavigateParams>, auth_opt: Option<&str>) -> Result<&Self> {
+    pub async fn goto_with_cache(
+        &self,
+        params: impl Into<NavigateParams>,
+        auth_opt: Option<&str>,
+    ) -> Result<&Self> {
         use crate::cache::{get_cached_url, rewrite_base_tag};
         let navigate_params: NavigateParams = params.into();
         let mut force_navigate = true;
@@ -501,7 +514,11 @@ impl Page {
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
     #[cfg(not(feature = "cache"))]
-    pub async fn goto_with_cache(&self, params: impl Into<NavigateParams>, _auth_opt: Option<&str>) -> Result<&Self> {
+    pub async fn goto_with_cache(
+        &self,
+        params: impl Into<NavigateParams>,
+        _auth_opt: Option<&str>,
+    ) -> Result<&Self> {
         let res = self.execute(params.into()).await?;
 
         if let Some(err) = res.result.error_text {
@@ -716,11 +733,11 @@ impl Page {
             set_emulation_agent_override.user_agent_metadata = default_params1.user_agent_metadata;
 
             tokio::try_join!(
-                self.execute(default_params),
-                self.execute(set_emulation_agent_override)
+                self.send_command(default_params),
+                self.send_command(set_emulation_agent_override)
             )?;
         } else {
-            self.execute(default_params).await?;
+            self.send_command(default_params).await?;
         }
 
         Ok(self)
@@ -823,7 +840,7 @@ impl Page {
     /// Tries to close page, running its beforeunload hooks, if any.
     /// Calls Page.close with [`CloseParams`]
     pub async fn close(self) -> Result<()> {
-        self.execute(CloseParams::default()).await?;
+        self.send_command(CloseParams::default()).await?;
         Ok(())
     }
 
@@ -1500,6 +1517,28 @@ impl Page {
         Ok(self)
     }
 
+    /// Turns on virtual time for all frames (replacing real-time with a synthetic time source) and sets the current virtual time policy. Note this supersedes any previous time budget.
+    pub async fn enable_virtual_time_with_budget(
+        &self,
+        budget_ms: f64,
+        policy: Option<chromiumoxide_cdp::cdp::browser_protocol::emulation::VirtualTimePolicy>,
+        max_virtual_time_task_starvation_count: Option<i64>,
+        initial_virtual_time: Option<TimeSinceEpoch>,
+    ) -> Result<&Self> {
+        let params =
+            chromiumoxide_cdp::cdp::browser_protocol::emulation::SetVirtualTimePolicyParams {
+                policy: policy.unwrap_or(
+                    chromiumoxide_cdp::cdp::browser_protocol::emulation::VirtualTimePolicy::Advance,
+                ),
+                budget: Some(budget_ms),
+                max_virtual_time_task_starvation_count: max_virtual_time_task_starvation_count
+                    .or(Some(10_000)),
+                initial_virtual_time,
+            };
+        self.send_command(params).await?;
+        Ok(self)
+    }
+
     /// Emulates hardware concurrency.
     pub async fn emulate_hardware_concurrency(&self, hardware_concurrency: i64) -> Result<&Self> {
         self.execute(SetHardwareConcurrencyOverrideParams::new(
@@ -1605,7 +1644,7 @@ impl Page {
     /// Enables ServiceWorkers. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/ServiceWorker#method-enable
     pub async fn enable_service_workers(&self) -> Result<&Self> {
-        self.execute(browser_protocol::service_worker::EnableParams::default())
+        self.send_command(browser_protocol::service_worker::EnableParams::default())
             .await?;
         Ok(self)
     }
@@ -1613,7 +1652,7 @@ impl Page {
     /// Disables ServiceWorker. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/ServiceWorker#method-enable
     pub async fn disable_service_workers(&self) -> Result<&Self> {
-        self.execute(browser_protocol::service_worker::DisableParams::default())
+        self.send_command(browser_protocol::service_worker::DisableParams::default())
             .await?;
         Ok(self)
     }
@@ -1621,7 +1660,7 @@ impl Page {
     /// Enables Performances. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Performance#method-enable
     pub async fn enable_performance(&self) -> Result<&Self> {
-        self.execute(browser_protocol::performance::EnableParams::default())
+        self.send_command(browser_protocol::performance::EnableParams::default())
             .await?;
         Ok(self)
     }
@@ -1629,7 +1668,7 @@ impl Page {
     /// Disables Performances. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Performance#method-disable
     pub async fn disable_performance(&self) -> Result<&Self> {
-        self.execute(browser_protocol::performance::DisableParams::default())
+        self.send_command(browser_protocol::performance::DisableParams::default())
             .await?;
         Ok(self)
     }
@@ -1637,7 +1676,7 @@ impl Page {
     /// Enables Overlay domain notifications. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Overlay#method-enable
     pub async fn enable_overlay(&self) -> Result<&Self> {
-        self.execute(browser_protocol::overlay::EnableParams::default())
+        self.send_command(browser_protocol::overlay::EnableParams::default())
             .await?;
         Ok(self)
     }
@@ -1645,7 +1684,7 @@ impl Page {
     /// Disables Overlay domain notifications. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Overlay#method-enable
     pub async fn disable_overlay(&self) -> Result<&Self> {
-        self.execute(browser_protocol::overlay::DisableParams::default())
+        self.send_command(browser_protocol::overlay::DisableParams::default())
             .await?;
         Ok(self)
     }
@@ -1653,7 +1692,7 @@ impl Page {
     /// Enables Overlay domain paint rectangles. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Overlay/#method-setShowPaintRects
     pub async fn enable_paint_rectangles(&self) -> Result<&Self> {
-        self.execute(browser_protocol::overlay::SetShowPaintRectsParams::new(
+        self.send_command(browser_protocol::overlay::SetShowPaintRectsParams::new(
             true,
         ))
         .await?;
@@ -1663,7 +1702,7 @@ impl Page {
     /// Disabled Overlay domain paint rectangles. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Overlay/#method-setShowPaintRects
     pub async fn disable_paint_rectangles(&self) -> Result<&Self> {
-        self.execute(browser_protocol::overlay::SetShowPaintRectsParams::new(
+        self.send_command(browser_protocol::overlay::SetShowPaintRectsParams::new(
             false,
         ))
         .await?;
@@ -1677,7 +1716,7 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Log#method-enable
     pub async fn enable_log(&self) -> Result<&Self> {
-        self.execute(browser_protocol::log::EnableParams::default())
+        self.send_command(browser_protocol::log::EnableParams::default())
             .await?;
         Ok(self)
     }
@@ -1688,49 +1727,49 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Log#method-disable
     pub async fn disable_log(&self) -> Result<&Self> {
-        self.execute(browser_protocol::log::DisableParams::default())
+        self.send_command(browser_protocol::log::DisableParams::default())
             .await?;
         Ok(self)
     }
 
     /// Enables runtime domain. Activated by default.
     pub async fn enable_runtime(&self) -> Result<&Self> {
-        self.execute(js_protocol::runtime::EnableParams::default())
+        self.send_command(js_protocol::runtime::EnableParams::default())
             .await?;
         Ok(self)
     }
 
     /// Enables the network.
     pub async fn enable_network(&self) -> Result<&Self> {
-        self.execute(browser_protocol::network::EnableParams::default())
+        self.send_command(browser_protocol::network::EnableParams::default())
             .await?;
         Ok(self)
     }
 
     /// Disables the network.
     pub async fn disable_network(&self) -> Result<&Self> {
-        self.execute(browser_protocol::network::DisableParams::default())
+        self.send_command(browser_protocol::network::DisableParams::default())
             .await?;
         Ok(self)
     }
 
     /// Disables runtime domain.
     pub async fn disable_runtime(&self) -> Result<&Self> {
-        self.execute(js_protocol::runtime::DisableParams::default())
+        self.send_command(js_protocol::runtime::DisableParams::default())
             .await?;
         Ok(self)
     }
 
     /// Enables Debugger. Enabled by default.
     pub async fn enable_debugger(&self) -> Result<&Self> {
-        self.execute(js_protocol::debugger::EnableParams::default())
+        self.send_command(js_protocol::debugger::EnableParams::default())
             .await?;
         Ok(self)
     }
 
     /// Disables Debugger.
     pub async fn disable_debugger(&self) -> Result<&Self> {
-        self.execute(js_protocol::debugger::DisableParams::default())
+        self.send_command(js_protocol::debugger::DisableParams::default())
             .await?;
         Ok(self)
     }
@@ -1738,7 +1777,7 @@ impl Page {
     /// Enables page domain notifications. Enabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-enable
     pub async fn enable_page(&self) -> Result<&Self> {
-        self.execute(browser_protocol::page::EnableParams::default())
+        self.send_command(browser_protocol::page::EnableParams::default())
             .await?;
         Ok(self)
     }
@@ -1746,35 +1785,35 @@ impl Page {
     /// Disables page domain notifications. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-disable
     pub async fn disable_page(&self) -> Result<&Self> {
-        self.execute(browser_protocol::page::EnableParams::default())
+        self.send_command(browser_protocol::page::EnableParams::default())
             .await?;
         Ok(self)
     }
 
     // Enables DOM agent
     pub async fn enable_dom(&self) -> Result<&Self> {
-        self.execute(browser_protocol::dom::EnableParams::default())
+        self.send_command(browser_protocol::dom::EnableParams::default())
             .await?;
         Ok(self)
     }
 
     // Disables DOM agent
     pub async fn disable_dom(&self) -> Result<&Self> {
-        self.execute(browser_protocol::dom::DisableParams::default())
+        self.send_command(browser_protocol::dom::DisableParams::default())
             .await?;
         Ok(self)
     }
 
     // Enables the CSS agent
     pub async fn enable_css(&self) -> Result<&Self> {
-        self.execute(browser_protocol::css::EnableParams::default())
+        self.send_command(browser_protocol::css::EnableParams::default())
             .await?;
         Ok(self)
     }
 
     // Disables the CSS agent
     pub async fn disable_css(&self) -> Result<&Self> {
-        self.execute(browser_protocol::css::DisableParams::default())
+        self.send_command(browser_protocol::css::DisableParams::default())
             .await?;
         Ok(self)
     }
@@ -1785,14 +1824,14 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Network#method-setBlockedURLs
     pub async fn set_blocked_urls(&self, urls: Vec<String>) -> Result<&Self> {
-        self.execute(SetBlockedUrLsParams::new(urls)).await?;
+        self.send_command(SetBlockedUrLsParams::new(urls)).await?;
         Ok(self)
     }
 
     /// Force the page stop all navigations and pending resource fetches.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Page#method-stopLoading
     pub async fn stop_loading(&self) -> Result<&Self> {
-        self.execute(browser_protocol::page::StopLoadingParams::default())
+        self.send_command(browser_protocol::page::StopLoadingParams::default())
             .await?;
         Ok(self)
     }
@@ -1803,7 +1842,7 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Network#method-setBlockedURLs
     pub async fn block_all_urls(&self) -> Result<&Self> {
-        self.execute(SetBlockedUrLsParams::new(vec!["*".into()]))
+        self.send_command(SetBlockedUrLsParams::new(vec!["*".into()]))
             .await?;
         Ok(self)
     }
@@ -1863,9 +1902,10 @@ impl Page {
                 cookie.url = Some(url);
             }
         }
-        self.execute(DeleteCookiesParams::from_cookie(&cookie))
+        self.send_command(DeleteCookiesParams::from_cookie(&cookie))
             .await?;
-        self.execute(SetCookiesParams::new(vec![cookie])).await?;
+        self.send_command(SetCookiesParams::new(vec![cookie]))
+            .await?;
         Ok(self)
     }
 
@@ -1890,7 +1930,7 @@ impl Page {
         self.delete_cookies_unchecked(cookies.iter().map(DeleteCookiesParams::from_cookie))
             .await?;
 
-        self.execute(SetCookiesParams::new(cookies)).await?;
+        self.send_command(SetCookiesParams::new(cookies)).await?;
         Ok(self)
     }
 
@@ -1906,7 +1946,7 @@ impl Page {
                 cookie.url = Some(url);
             }
         }
-        self.execute(cookie).await?;
+        self.send_command(cookie).await?;
         Ok(self)
     }
 
@@ -1943,7 +1983,7 @@ impl Page {
         cookies: impl Iterator<Item = DeleteCookiesParams>,
     ) -> Result<&Self> {
         // NOTE: the buffer size is arbitrary
-        let mut cmds = stream::iter(cookies.into_iter().map(|cookie| self.execute(cookie)))
+        let mut cmds = stream::iter(cookies.into_iter().map(|cookie| self.send_command(cookie)))
             .buffer_unordered(5);
         while let Some(resp) = cmds.next().await {
             resp?;
@@ -2265,6 +2305,32 @@ impl Page {
         self.inner.secondary_execution_context().await
     }
 
+    #[cfg(feature = "cache")]
+    /// Spawn a cache listener to store resources to memory. This does nothing without the 'cache' flag.
+    pub async fn spawn_cache_listener(&self, auth: Option<String>) -> Result<&Self> {
+        use crate::cache::spawn_response_cache_listener;
+        spawn_response_cache_listener(self.clone(), auth).await?;
+        Ok(self)
+    }
+
+    #[cfg(feature = "cache")]
+    /// Spawn a cache intercepter to load resources to memory. This does nothing without the 'cache' flag.
+    pub async fn spawn_cache_intercepter(
+        &self,
+        auth: Option<String>,
+        policy: Option<crate::cache::BasicCachePolicy>,
+    ) -> Result<&Self> {
+        use crate::cache::spawn_fetch_cache_interceptor;
+        spawn_fetch_cache_interceptor(self.clone(), auth, policy).await?;
+        Ok(self)
+    }
+
+    #[cfg(not(feature = "cache"))]
+    /// Spawn a cache listener to store resources to memory. This does nothing without the 'cache' flag.
+    pub async fn spawn_cache_listener(&self, _auth: Option<String>) -> Result<&Self> {
+        Ok(self)
+    }
+
     pub async fn frame_execution_context(
         &self,
         frame_id: FrameId,
@@ -2369,13 +2435,13 @@ impl Page {
         &self,
         params: impl Into<ScreencastFrameAckParams>,
     ) -> Result<&Self> {
-        self.execute(params.into()).await?;
+        self.send_command(params.into()).await?;
         Ok(self)
     }
 
     /// Stop screencast a frame.
     pub async fn stop_screencast(&self, params: impl Into<StopScreencastParams>) -> Result<&Self> {
-        self.execute(params.into()).await?;
+        self.send_command(params.into()).await?;
         Ok(self)
     }
 

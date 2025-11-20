@@ -13,12 +13,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let target_url = "https://en.wikipedia.org";
-    let page = browser.new_page(target_url).await?;
-
-    page.goto(target_url).await?;
-
+    let page = browser.new_page("https://en.wikipedia.org").await?;
     let html = page.wait_for_navigation().await?.content().await?;
+
     println!("{:?}", html);
 
     handle.await?;

@@ -544,30 +544,33 @@ impl Browser {
     }
 
     /// Send a new empty browser context.
-    pub async fn send_new_context(&mut self, browser_context_id: BrowserContextId) -> Result<()> {
+    pub async fn send_new_context(
+        &mut self,
+        browser_context_id: BrowserContextId,
+    ) -> Result<&Self> {
         self.browser_context = BrowserContext::from(browser_context_id);
         self.sender
             .clone()
             .send(HandlerMessage::InsertContext(self.browser_context.clone()))
             .await?;
-        Ok(())
+        Ok(self)
     }
 
     /// Deletes a browser context.
     pub async fn dispose_browser_context(
         &self,
         browser_context_id: impl Into<BrowserContextId>,
-    ) -> Result<()> {
+    ) -> Result<&Self> {
         self.execute(DisposeBrowserContextParams::new(browser_context_id))
             .await?;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Clears cookies.
-    pub async fn clear_cookies(&self) -> Result<()> {
+    pub async fn clear_cookies(&self) -> Result<&Self> {
         self.execute(ClearCookiesParams::default()).await?;
-        Ok(())
+        Ok(self)
     }
 
     /// Returns all browser cookies.

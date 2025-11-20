@@ -88,6 +88,12 @@ impl PageInner {
         execute(cmd, self.sender.clone(), Some(self.session_id.clone())).await
     }
 
+    /// Execute a PDL command without waiting for the response.
+    pub(crate) async fn send_command<T: Command>(&self, cmd: T) -> Result<&Self> {
+        let _ = send_command(cmd, self.sender.clone(), Some(self.session_id.clone())).await;
+        Ok(self)
+    }
+
     /// Create a PDL command future
     pub(crate) fn command_future<T: Command>(&self, cmd: T) -> Result<CommandFuture<T>> {
         CommandFuture::new(cmd, self.sender.clone(), Some(self.session_id.clone()))
@@ -292,7 +298,7 @@ impl PageInner {
             .r#type(DispatchMouseEventType::MousePressed)
             .build()
         {
-            self.move_mouse(point).await?.execute(cmd).await?;
+            self.move_mouse(point).await?.send_command(cmd).await?;
         }
 
         if let Ok(cmd) = cmd.r#type(DispatchMouseEventType::MouseReleased).build() {
@@ -379,7 +385,7 @@ impl PageInner {
             .r#type(DispatchMouseEventType::MousePressed)
             .build()
         {
-            self.move_mouse(from).await?.execute(cmd).await?;
+            self.move_mouse(from).await?.send_command(cmd).await?;
         }
 
         // Note: we may want to add some slight movement in between for advanced anti-bot bypassing.
@@ -390,7 +396,7 @@ impl PageInner {
             .r#type(DispatchMouseEventType::MouseMoved)
             .build()
         {
-            self.move_mouse(to).await?.execute(cmd).await?;
+            self.move_mouse(to).await?.send_command(cmd).await?;
         }
 
         if let Ok(cmd) = cmd
@@ -399,7 +405,7 @@ impl PageInner {
             .y(to.y)
             .build()
         {
-            self.execute(cmd).await?;
+            self.send_command(cmd).await?;
         }
 
         Ok(self)
@@ -623,19 +629,18 @@ impl PageInner {
         await_promise: bool,
         remote_object_id: RemoteObjectId,
     ) -> Result<CallFunctionOnReturns> {
-        let resp = self
-            .execute(
-                CallFunctionOnParams::builder()
-                    .object_id(remote_object_id)
-                    .function_declaration(function_declaration)
-                    .generate_preview(true)
-                    .await_promise(await_promise)
-                    .build()
-                    .unwrap(),
-            )
-            .await?;
-
-        Ok(resp.result)
+        if let Ok(resp) = CallFunctionOnParams::builder()
+            .object_id(remote_object_id)
+            .function_declaration(function_declaration)
+            .generate_preview(true)
+            .await_promise(await_promise)
+            .build()
+        {
+            let resp = self.execute(resp).await?;
+            Ok(resp.result)
+        } else {
+            Err(CdpError::NotFound)
+        }
     }
 
     pub async fn evaluate_expression(
@@ -791,12 +796,13 @@ impl PageInner {
         let res = self.execute(cdp_params).await?.result;
 
         if omit_background {
-            self.execute(SetDefaultBackgroundColorOverrideParams { color: None })
+            self.send_command(SetDefaultBackgroundColorOverrideParams { color: None })
                 .await?;
         }
 
         if full_page {
-            self.execute(ClearDeviceMetricsOverrideParams {}).await?;
+            self.send_command(ClearDeviceMetricsOverrideParams {})
+                .await?;
         }
 
         Ok(utils::base64::decode(&res.data)?)
@@ -815,14 +821,23 @@ impl PageInner {
 
 pub(crate) async fn execute<T: Command>(
     cmd: T,
-    mut sender: Sender<TargetMessage>,
+    sender: Sender<TargetMessage>,
     session: Option<SessionId>,
 ) -> Result<CommandResponse<T::Response>> {
-    let (tx, rx) = oneshot_channel();
     let method = cmd.identifier();
-    let msg = CommandMessage::with_session(cmd, tx, session)?;
-
-    sender.send(TargetMessage::Command(msg)).await?;
+    let rx = send_command(cmd, sender, session).await?;
     let resp = rx.await??;
     to_command_response::<T>(resp, method)
+}
+
+/// Execute a command without waiting
+pub(crate) async fn send_command<T: Command>(
+    cmd: T,
+    mut sender: Sender<TargetMessage>,
+    session: Option<SessionId>,
+) -> Result<futures::channel::oneshot::Receiver<Result<chromiumoxide_types::Response, CdpError>>> {
+    let (tx, rx) = oneshot_channel();
+    let msg = CommandMessage::with_session(cmd, tx, session)?;
+    sender.send(TargetMessage::Command(msg)).await?;
+    Ok(rx)
 }

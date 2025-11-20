@@ -451,6 +451,7 @@ impl NetworkManager {
         if self.user_request_interception_enabled && self.protocol_request_interception_enabled {
             return;
         }
+
         if self.block_all {
             use chromiumoxide_cdp::cdp::browser_protocol::network::ErrorReason;
             tracing::debug!("Blocked: {:?} - {}", event.resource_type, event.request.url);
@@ -470,9 +471,7 @@ impl NetworkManager {
                     let javascript_resource = event.resource_type == ResourceType::Script;
                     let document_resource = event.resource_type == ResourceType::Document;
                     let network_resource = !document_resource
-                        && (event.resource_type == ResourceType::Xhr
-                            || event.resource_type == ResourceType::Fetch
-                            || event.resource_type == ResourceType::WebSocket);
+                        && crate::utils::is_network_resource(&event.resource_type);
 
                     let skip_networking = self.block_all
                         || IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
@@ -653,9 +652,7 @@ impl NetworkManager {
                     let javascript_resource = event.resource_type == ResourceType::Script;
                     let document_resource = event.resource_type == ResourceType::Document;
                     let network_resource = !document_resource
-                        && (event.resource_type == ResourceType::Xhr
-                            || event.resource_type == ResourceType::Fetch
-                            || event.resource_type == ResourceType::WebSocket);
+                        && crate::utils::is_network_resource(&event.resource_type);
                     let mut replacer = None;
 
                     // block all of these events.

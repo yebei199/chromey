@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use chromiumoxide_cdp::cdp::browser_protocol::network::ResourceType;
+
 /// Write to file with configured runtime
 pub(crate) async fn write<P: AsRef<Path> + Unpin, C: AsRef<[u8]>>(
     path: P,
@@ -113,6 +115,14 @@ fn skip_args(input: &mut &str) -> bool {
     }
 
     open == closed
+}
+
+/// Is the resource a network event.
+pub fn is_network_resource(resource_type: &ResourceType) -> bool {
+    matches!(
+        resource_type,
+        ResourceType::Xhr | ResourceType::Fetch | ResourceType::WebSocket
+    )
 }
 
 #[cfg(test)]
