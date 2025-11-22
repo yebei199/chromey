@@ -463,6 +463,24 @@ impl Page {
         Ok(self)
     }
 
+    /// Wait until the network is idle.
+    /// Usage:
+    ///   page.goto("https://example.com").await?;
+    ///   page.wait_for_network_idle().await?;
+    pub async fn wait_for_network_idle(&self) -> Result<&Self> {
+        self.inner.wait_for_network_idle().await?;
+        Ok(self)
+    }
+
+    /// Wait until the network is almost idle.
+    /// Usage:
+    ///   page.goto("https://example.com").await?;
+    ///   page.wait_for_network_almost_idle().await?;
+    pub async fn wait_for_network_almost_idle(&self) -> Result<&Self> {
+        self.inner.wait_for_network_almost_idle().await?;
+        Ok(self)
+    }
+
     /// Navigate directly to the given URL checking the HTTP cache first.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
@@ -2327,12 +2345,6 @@ impl Page {
     ) -> Result<&Self> {
         use crate::cache::spawn_fetch_cache_interceptor;
         spawn_fetch_cache_interceptor(self.clone(), auth, policy, cache_strategy).await?;
-        Ok(self)
-    }
-
-    #[cfg(not(feature = "cache"))]
-    /// Spawn a cache listener to store resources to memory. This does nothing without the 'cache' flag.
-    pub async fn spawn_cache_listener(&self, _auth: Option<String>) -> Result<&Self> {
         Ok(self)
     }
 

@@ -133,6 +133,10 @@ pub struct Target {
     event_listeners: EventListeners,
     /// Senders that need to be notified once the main frame has loaded
     wait_for_frame_navigation: Vec<Sender<ArcHttpRequest>>,
+    /// Senders that need to be notified once the main frame reaches `networkIdle`.
+    wait_for_network_idle: Vec<Sender<ArcHttpRequest>>,
+    /// (Optional) for `networkAlmostIdle` if you want it as well.
+    wait_for_network_almost_idle: Vec<Sender<ArcHttpRequest>>,
     /// The sender who requested the page.
     initiator: Option<Sender<Result<Page>>>,
 }
@@ -178,6 +182,8 @@ impl Target {
             page: None,
             init_state: TargetInit::AttachToTarget,
             wait_for_frame_navigation: Default::default(),
+            wait_for_network_idle: Default::default(),
+            wait_for_network_almost_idle: Default::default(),
             queued_events: Default::default(),
             event_listeners: Default::default(),
             initiator: None,
@@ -517,6 +523,18 @@ impl Target {
                         let _ = tx.send(frame.http_request().cloned());
                     }
                 }
+
+                if frame.is_network_idle() {
+                    while let Some(tx) = self.wait_for_network_idle.pop() {
+                        let _ = tx.send(frame.http_request().cloned());
+                    }
+                }
+
+                if frame.is_network_almost_idle() {
+                    while let Some(tx) = self.wait_for_network_almost_idle.pop() {
+                        let _ = tx.send(frame.http_request().cloned());
+                    }
+                }
             }
 
             // Drain queued messages first.
@@ -606,6 +624,29 @@ impl Target {
                                 self.wait_for_frame_navigation.push(tx);
                             }
                         }
+                        TargetMessage::WaitForNetworkIdle(tx) => {
+                            if let Some(frame) = self.frame_manager.main_frame() {
+                                if frame.is_network_idle() {
+                                    let _ = tx.send(frame.http_request().cloned());
+                                } else {
+                                    self.wait_for_network_idle.push(tx);
+                                }
+                            } else {
+                                self.wait_for_network_idle.push(tx);
+                            }
+                        }
+                        TargetMessage::WaitForNetworkAlmostIdle(tx) => {
+                            if let Some(frame) = self.frame_manager.main_frame() {
+                                if frame.is_network_almost_idle() {
+                                    let _ = tx.send(frame.http_request().cloned());
+                                } else {
+                                    self.wait_for_network_almost_idle.push(tx);
+                                }
+                            } else {
+                                self.wait_for_network_almost_idle.push(tx);
+                            }
+                        }
+
                         TargetMessage::AddEventListener(req) => {
                             if req.method == "Fetch.requestPaused" {
                                 self.network_manager.disable_request_intercept();
@@ -935,6 +976,10 @@ pub enum TargetMessage {
     Parent(GetParent),
     /// A Message that resolves when the frame finished loading a new url
     WaitForNavigation(Sender<ArcHttpRequest>),
+    /// A Message that resolves when the frame network is idle
+    WaitForNetworkIdle(Sender<ArcHttpRequest>),
+    /// A Message that resolves when the frame network is almost idle
+    WaitForNetworkAlmostIdle(Sender<ArcHttpRequest>),
     /// A request to submit a new listener that gets notified with every
     /// received event
     AddEventListener(EventListenerRequest),

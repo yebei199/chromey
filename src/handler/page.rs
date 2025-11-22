@@ -104,6 +104,16 @@ impl PageInner {
         TargetMessageFuture::<ArcHttpRequest>::wait_for_navigation(self.sender.clone())
     }
 
+    /// This creates navigation future with the final http response when the page network is idle
+    pub(crate) fn wait_for_network_idle(&self) -> TargetMessageFuture<ArcHttpRequest> {
+        TargetMessageFuture::<ArcHttpRequest>::wait_for_network_idle(self.sender.clone())
+    }
+
+    /// This creates navigation future with the final http response when the page network is almost idle
+    pub(crate) fn wait_for_network_almost_idle(&self) -> TargetMessageFuture<ArcHttpRequest> {
+        TargetMessageFuture::<ArcHttpRequest>::wait_for_network_almost_idle(self.sender.clone())
+    }
+
     /// This creates HTTP future with navigation and responds with the final
     /// http response when the page is loaded
     pub(crate) fn http_future<T: Command>(&self, cmd: T) -> Result<HttpFuture<T>> {

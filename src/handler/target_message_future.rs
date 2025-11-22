@@ -39,12 +39,48 @@ impl<T> TargetMessageFuture<T> {
         }
     }
 
-    pub fn wait_for_navigation(target_sender: TargetSender) -> TargetMessageFuture<ArcHttpRequest> {
+    /// Helper to build a `TargetMessageFuture<ArcHttpRequest>` for any
+    /// "wait" style target message (navigation, network idle, etc.).
+    ///
+    /// The `make_msg` closure receives the `oneshot::Sender<ArcHttpRequest>` and
+    /// must wrap it into the appropriate `TargetMessage` variant
+    /// (e.g. `TargetMessage::WaitForNavigation(tx)`).
+    pub(crate) fn wait(
+        target_sender: TargetSender,
+        make_msg: impl FnOnce(oneshot::Sender<ArcHttpRequest>) -> TargetMessage,
+    ) -> TargetMessageFuture<ArcHttpRequest> {
         let (tx, rx_request) = oneshot_channel();
-
-        let message = TargetMessage::WaitForNavigation(tx);
-
+        let message = make_msg(tx);
         TargetMessageFuture::new(target_sender, message, rx_request)
+    }
+
+    /// Wait for the main-frame navigation to finish.
+    ///
+    /// This triggers a `TargetMessage::WaitForNavigation` and resolves with
+    /// the final `ArcHttpRequest` associated with that navigation (if any).
+    pub fn wait_for_navigation(target_sender: TargetSender) -> TargetMessageFuture<ArcHttpRequest> {
+        Self::wait(target_sender, TargetMessage::WaitForNavigation)
+    }
+
+    /// Wait until the main frame reaches `networkIdle`.
+    ///
+    /// This triggers a `TargetMessage::WaitForNetworkIdle` and resolves with
+    /// the `ArcHttpRequest` associated with the navigation that led to the
+    /// idle state (if any).
+    pub fn wait_for_network_idle(
+        target_sender: TargetSender,
+    ) -> TargetMessageFuture<ArcHttpRequest> {
+        Self::wait(target_sender, TargetMessage::WaitForNetworkIdle)
+    }
+
+    /// Wait until the main frame reaches `networkAlmostIdle`.
+    ///
+    /// This triggers a `TargetMessage::WaitForNetworkAlmostIdle` and resolves
+    /// with the `ArcHttpRequest` associated with that navigation (if any).
+    pub fn wait_for_network_almost_idle(
+        target_sender: TargetSender,
+    ) -> TargetMessageFuture<ArcHttpRequest> {
+        Self::wait(target_sender, TargetMessage::WaitForNetworkAlmostIdle)
     }
 }
 

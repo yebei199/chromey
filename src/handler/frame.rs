@@ -189,6 +189,16 @@ impl Frame {
         self.lifecycle_events.contains("load")
     }
 
+    /// Main frame + child frames have fired the `networkIdle` lifecycle event.
+    pub fn is_network_idle(&self) -> bool {
+        self.lifecycle_events.contains("networkIdle")
+    }
+
+    /// Main frame + child frames have fired the `networkAlmostIdle` lifecycle event.
+    pub fn is_network_almost_idle(&self) -> bool {
+        self.lifecycle_events.contains("networkAlmostIdle")
+    }
+
     pub fn clear_contexts(&mut self) {
         self.main_world.take_context();
         self.secondary_world.take_context();
@@ -401,7 +411,7 @@ impl FrameManager {
     /// Navigate a specific frame
     pub fn navigate_frame(&mut self, frame_id: FrameId, mut req: FrameRequestedNavigation) {
         let loader_id = self.frames.get(&frame_id).and_then(|f| f.loader_id.clone());
-        let watcher = NavigationWatcher::until_page_load(req.id, frame_id.clone(), loader_id);
+        let watcher = NavigationWatcher::until_load(req.id, frame_id.clone(), loader_id);
 
         // insert the frame_id in the request if not present
         req.set_frame_id(frame_id);
@@ -696,14 +706,72 @@ pub struct NavigationWatcher {
 }
 
 impl NavigationWatcher {
-    pub fn until_page_load(id: NavigationId, frame: FrameId, loader_id: Option<LoaderId>) -> Self {
+    /// Generic ctor: wait until all given lifecycle events have fired
+    /// (including all child frames).
+    pub fn until_lifecycle(
+        id: NavigationId,
+        frame: FrameId,
+        loader_id: Option<LoaderId>,
+        events: &[LifecycleEvent],
+    ) -> Self {
+        let expected_lifecycle = events.iter().map(LifecycleEvent::to_method_id).collect();
+
         Self {
             id,
-            expected_lifecycle: std::iter::once("load".into()).collect(),
-            loader_id,
+            expected_lifecycle,
             frame_id: frame,
+            loader_id,
             same_document_navigation: false,
         }
+    }
+
+    /// Wait for "load"
+    pub fn until_load(id: NavigationId, frame: FrameId, loader_id: Option<LoaderId>) -> Self {
+        Self::until_lifecycle(id, frame, loader_id, &[LifecycleEvent::Load])
+    }
+
+    /// Wait for DOMContentLoaded
+    pub fn until_domcontent_loaded(
+        id: NavigationId,
+        frame: FrameId,
+        loader_id: Option<LoaderId>,
+    ) -> Self {
+        Self::until_lifecycle(id, frame, loader_id, &[LifecycleEvent::DomcontentLoaded])
+    }
+
+    /// Wait for networkIdle
+    pub fn until_network_idle(
+        id: NavigationId,
+        frame: FrameId,
+        loader_id: Option<LoaderId>,
+    ) -> Self {
+        Self::until_lifecycle(id, frame, loader_id, &[LifecycleEvent::NetworkIdle])
+    }
+
+    /// Wait for networkAlmostIdle
+    pub fn until_network_almost_idle(
+        id: NavigationId,
+        frame: FrameId,
+        loader_id: Option<LoaderId>,
+    ) -> Self {
+        Self::until_lifecycle(id, frame, loader_id, &[LifecycleEvent::NetworkAlmostIdle])
+    }
+
+    /// (optional) Wait for multiple states, e.g. DOMContentLoaded + networkIdle
+    pub fn until_domcontent_and_network_idle(
+        id: NavigationId,
+        frame: FrameId,
+        loader_id: Option<LoaderId>,
+    ) -> Self {
+        Self::until_lifecycle(
+            id,
+            frame,
+            loader_id,
+            &[
+                LifecycleEvent::DomcontentLoaded,
+                LifecycleEvent::NetworkIdle,
+            ],
+        )
     }
 
     /// Checks whether the navigation was completed
@@ -759,6 +827,18 @@ pub enum LifecycleEvent {
     DomcontentLoaded,
     NetworkIdle,
     NetworkAlmostIdle,
+}
+
+impl LifecycleEvent {
+    #[inline]
+    pub fn to_method_id(&self) -> MethodId {
+        match self {
+            LifecycleEvent::Load => "load".into(),
+            LifecycleEvent::DomcontentLoaded => "DOMContentLoaded".into(),
+            LifecycleEvent::NetworkIdle => "networkIdle".into(),
+            LifecycleEvent::NetworkAlmostIdle => "networkAlmostIdle".into(),
+        }
+    }
 }
 
 impl AsRef<str> for LifecycleEvent {
