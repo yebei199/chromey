@@ -134,11 +134,14 @@ impl Browser {
                 .await
             {
                 Ok(req) => {
-                    let connection: BrowserConnection =
-                        crate::serde_json::from_slice(&req.bytes().await.unwrap_or_default())
-                            .unwrap_or_default();
-                    if !connection.web_socket_debugger_url.is_empty() {
-                        debug_ws_url = connection.web_socket_debugger_url;
+                    if let Ok(b) = req.bytes().await {
+                        if let Ok(connection) =
+                            crate::serde_json::from_slice::<Box<BrowserConnection>>(&b)
+                        {
+                            if !connection.web_socket_debugger_url.is_empty() {
+                                debug_ws_url = connection.web_socket_debugger_url;
+                            }
+                        }
                     }
                 }
                 Err(_) => return Err(CdpError::NoResponse),

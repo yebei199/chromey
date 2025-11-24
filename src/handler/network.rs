@@ -32,6 +32,7 @@ use spider_network_blocker::intercept_manager::NetworkInterceptManager;
 pub use spider_network_blocker::scripts::{
     URL_IGNORE_SCRIPT_BASE_PATHS, URL_IGNORE_SCRIPT_STYLES_PATHS, URL_IGNORE_TRIE_PATHS,
 };
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -444,380 +445,273 @@ impl NetworkManager {
         }
     }
 
-    #[cfg(not(feature = "adblock"))]
-    pub fn on_fetch_request_paused(&mut self, event: &EventRequestPaused) {
-        use super::blockers::block_websites::block_website;
-
-        if self.user_request_interception_enabled && self.protocol_request_interception_enabled {
-            return;
-        }
-
-        if self.block_all {
-            use chromiumoxide_cdp::cdp::browser_protocol::network::ErrorReason;
-            tracing::debug!("Blocked: {:?} - {}", event.resource_type, event.request.url);
-            let fullfill_params = crate::handler::network::fetch::FailRequestParams::new(
-                event.request_id.clone(),
-                ErrorReason::BlockedByClient,
-            );
-            self.push_cdp_request(fullfill_params);
+    #[cfg(feature = "adblock")]
+    #[inline]
+    /// Detect if ad enabled.
+    fn detect_ad_if_enabled(&mut self, event: &EventRequestPaused, skip_networking: bool) -> bool {
+        if skip_networking {
+            true
         } else {
-            if let Some(network_id) = event.network_id.as_ref() {
-                if let Some(request_will_be_sent) =
-                    self.requests_will_be_sent.remove(network_id.as_ref())
-                {
-                    self.on_request(&request_will_be_sent, Some(event.request_id.clone().into()));
-                } else {
-                    let current_url = event.request.url.as_str();
-                    let javascript_resource = event.resource_type == ResourceType::Script;
-                    let document_resource = event.resource_type == ResourceType::Document;
-                    let network_resource =
-                        !document_resource && crate::utils::is_data_resource(&event.resource_type);
-
-                    let skip_networking = self.block_all
-                        || IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
-
-                    let skip_networking = skip_networking || self.document_reload_tracker >= 3;
-                    let mut replacer = None;
-
-                    if document_resource {
-                        if self.document_target_domain == current_url {
-                            // this will prevent the domain from looping (3 times is enough).
-                            self.document_reload_tracker += 1;
-                        } else if !self.document_target_domain.is_empty()
-                            && event.redirected_request_id.is_some()
-                        {
-                            let (http_document_replacement, mut https_document_replacement) =
-                                if self.document_target_domain.starts_with("http://") {
-                                    (
-                                        self.document_target_domain.replace("http://", "http//"),
-                                        self.document_target_domain.replace("http://", "https://"),
-                                    )
-                                } else {
-                                    (
-                                        self.document_target_domain.replace("https://", "https//"),
-                                        self.document_target_domain.replace("https://", "http://"),
-                                    )
-                                };
-
-                            let trailing = https_document_replacement.ends_with('/');
-
-                            if trailing {
-                                https_document_replacement.pop();
-                            }
-
-                            if https_document_replacement.ends_with('/') {
-                                https_document_replacement.pop();
-                            }
-
-                            let redirect_mask = format!(
-                                "{}{}",
-                                https_document_replacement, http_document_replacement
-                            );
-
-                            // handle redirect masking
-                            if current_url == redirect_mask {
-                                replacer = Some(if trailing {
-                                    format!("{}/", https_document_replacement)
-                                } else {
-                                    https_document_replacement
-                                });
-                            }
-                        }
-
-                        if self.document_target_domain.is_empty() && current_url.ends_with(".xml") {
-                            self.xml_document = true;
-                        }
-
-                        self.document_target_domain = event.request.url.clone();
-                    }
-
-                    let current_url = match &replacer {
-                        Some(r) => r,
-                        _ => &event.request.url,
-                    }
-                    .as_str();
-
-                    // main initial check
-                    let skip_networking = if !skip_networking {
-                        // allow sitemap xml building xsl
-                        if self.xml_document && current_url.ends_with(".xsl") {
-                            false
-                        } else {
-                            self.ignore_visuals
-                                && (IGNORE_VISUAL_RESOURCE_MAP
-                                    .contains(event.resource_type.as_ref()))
-                                || self.block_stylesheets
-                                    && ResourceType::Stylesheet == event.resource_type
-                                || self.block_javascript
-                                    && javascript_resource
-                                    && self.intercept_manager == NetworkInterceptManager::Unknown
-                                    && !ALLOWED_MATCHER.is_match(current_url)
-                        }
-                    } else {
-                        skip_networking
-                    };
-
-                    let skip_networking = if !skip_networking
-                        && (self.only_html || self.ignore_visuals)
-                        && (javascript_resource || document_resource)
-                    {
-                        ignore_script_embedded(current_url)
-                    } else {
-                        skip_networking
-                    };
-
-                    // analytics check
-                    let skip_networking = if !skip_networking && javascript_resource {
-                        self.ignore_script(
-                            current_url,
-                            self.block_analytics,
-                            self.intercept_manager,
-                        )
-                    } else {
-                        skip_networking
-                    };
-
-                    // XHR check
-                    let skip_networking = self.skip_xhr(skip_networking, &event, network_resource);
-
-                    // custom interception layer.
-                    let skip_networking = if !skip_networking
-                        && (javascript_resource || network_resource || document_resource)
-                    {
-                        self.intercept_manager.intercept_detection(
-                            &current_url,
-                            self.ignore_visuals,
-                            network_resource,
-                        )
-                    } else {
-                        skip_networking
-                    };
-
-                    let skip_networking =
-                        if !skip_networking && (javascript_resource || network_resource) {
-                            block_website(&current_url)
-                        } else {
-                            skip_networking
-                        };
-
-                    if skip_networking {
-                        tracing::debug!("Blocked: {:?} - {}", event.resource_type, current_url);
-                        let fullfill_params =
-                            crate::handler::network::fetch::FulfillRequestParams::new(
-                                event.request_id.clone(),
-                                200,
-                            );
-                        self.push_cdp_request(fullfill_params);
-                    } else {
-                        tracing::debug!("Allowed: {:?} - {}", event.resource_type, current_url);
-                        let mut continue_params =
-                            ContinueRequestParams::new(event.request_id.clone());
-
-                        if replacer.is_some() {
-                            continue_params.url = Some(current_url.into());
-                            continue_params.intercept_response = Some(false);
-                        }
-
-                        self.push_cdp_request(continue_params)
-                    }
-                }
-            } else {
-                self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
-            }
+            self.detect_ad(event)
         }
     }
 
-    #[cfg(feature = "adblock")]
+    /// When adblock feature is disabled, this is a no-op.
+    #[cfg(not(feature = "adblock"))]
+    #[inline]
+    fn detect_ad_if_enabled(&mut self, _event: &EventRequestPaused, skip_networking: bool) -> bool {
+        skip_networking
+    }
+
+    #[inline]
+    /// Fail request
+    fn fail_request_blocked(
+        &mut self,
+        request_id: &chromiumoxide_cdp::cdp::browser_protocol::fetch::RequestId,
+    ) {
+        let params = chromiumoxide_cdp::cdp::browser_protocol::fetch::FailRequestParams::new(
+            request_id.clone(),
+            chromiumoxide_cdp::cdp::browser_protocol::network::ErrorReason::BlockedByClient,
+        );
+        self.push_cdp_request(params);
+    }
+
+    #[inline]
+    /// Fulfill request
+    fn fulfill_request_empty_200(
+        &mut self,
+        request_id: &chromiumoxide_cdp::cdp::browser_protocol::fetch::RequestId,
+    ) {
+        let params = chromiumoxide_cdp::cdp::browser_protocol::fetch::FulfillRequestParams::new(
+            request_id.clone(),
+            200,
+        );
+        self.push_cdp_request(params);
+    }
+
+    #[inline]
+    /// Continue the request url.
+    fn continue_request_with_url(
+        &mut self,
+        request_id: &chromiumoxide_cdp::cdp::browser_protocol::fetch::RequestId,
+        url: Option<&str>,
+        intercept_response: bool,
+    ) {
+        let mut params = ContinueRequestParams::new(request_id.clone());
+        if let Some(url) = url {
+            params.url = Some(url.to_string());
+            params.intercept_response = Some(intercept_response);
+        }
+        self.push_cdp_request(params);
+    }
+
     pub fn on_fetch_request_paused(&mut self, event: &EventRequestPaused) {
+        // If both interceptions are enabled, do nothing.
         if self.user_request_interception_enabled && self.protocol_request_interception_enabled {
             return;
         }
 
         if self.block_all {
-            use chromiumoxide_cdp::cdp::browser_protocol::network::ErrorReason;
-            tracing::debug!("Blocked: {:?} - {}", event.resource_type, event.request.url);
-            let fullfill_params = crate::handler::network::fetch::FailRequestParams::new(
-                event.request_id.clone(),
-                ErrorReason::BlockedByClient,
+            tracing::debug!(
+                "Blocked (block_all): {:?} - {}",
+                event.resource_type,
+                event.request.url
             );
-            self.push_cdp_request(fullfill_params);
+            self.fail_request_blocked(&event.request_id);
+            return;
+        }
+
+        // If this paused request corresponds to a "request_will_be_sent", hand it off and exit.
+        if let Some(network_id) = event.network_id.as_ref() {
+            if let Some(request_will_be_sent) =
+                self.requests_will_be_sent.remove(network_id.as_ref())
+            {
+                self.on_request(&request_will_be_sent, Some(event.request_id.clone().into()));
+                return;
+            }
         } else {
-            if let Some(network_id) = event.network_id.as_ref() {
-                if let Some(request_will_be_sent) =
-                    self.requests_will_be_sent.remove(network_id.as_ref())
-                {
-                    self.on_request(&request_will_be_sent, Some(event.request_id.clone().into()));
-                } else {
-                    let current_url = event.request.url.as_str();
-                    let javascript_resource = event.resource_type == ResourceType::Script;
-                    let document_resource = event.resource_type == ResourceType::Document;
-                    let network_resource =
-                        !document_resource && crate::utils::is_data_resource(&event.resource_type);
-                    let mut replacer = None;
+            // No network_id, just continue.
+            self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()));
+            return;
+        }
 
-                    // block all of these events.
-                    let skip_networking = self.block_all
-                        || IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
+        // From here on, we handle the full decision tree.
+        let resource_type = &event.resource_type;
+        let javascript_resource = *resource_type == ResourceType::Script;
+        let document_resource = *resource_type == ResourceType::Document;
+        let network_resource = !document_resource && crate::utils::is_data_resource(resource_type);
 
-                    let skip_networking = skip_networking || self.document_reload_tracker >= 3;
+        // Start with static / cheap skip checks.
+        let mut skip_networking =
+            self.block_all || IGNORE_NETWORKING_RESOURCE_MAP.contains(resource_type.as_ref());
 
-                    if document_resource {
-                        if self.document_target_domain == current_url {
-                            // this will prevent the domain from looping (3 times is enough).
-                            self.document_reload_tracker += 1;
-                        } else if !self.document_target_domain.is_empty()
-                            && event.redirected_request_id.is_some()
-                        {
-                            let (http_document_replacement, mut https_document_replacement) =
-                                if self.document_target_domain.starts_with("http://") {
-                                    (
-                                        self.document_target_domain.replace("http://", "http//"),
-                                        self.document_target_domain.replace("http://", "https://"),
-                                    )
-                                } else {
-                                    (
-                                        self.document_target_domain.replace("https://", "https//"),
-                                        self.document_target_domain.replace("https://", "http://"),
-                                    )
-                                };
+        // Also short-circuit if we've reloaded this document too many times.
+        if !skip_networking {
+            skip_networking = self.document_reload_tracker >= 3;
+        }
 
-                            let trailing = https_document_replacement.ends_with('/');
+        // Handle document redirect / masking and track xml documents.
+        let (current_url_cow, had_replacer) =
+            self.handle_document_replacement_and_tracking(event, document_resource);
 
-                            if trailing {
-                                https_document_replacement.pop();
-                            }
+        let current_url: &str = current_url_cow.as_ref();
 
-                            if https_document_replacement.ends_with('/') {
-                                https_document_replacement.pop();
-                            }
-
-                            let redirect_mask = format!(
-                                "{}{}",
-                                https_document_replacement, http_document_replacement
-                            );
-
-                            // handle redirect masking
-                            if current_url == redirect_mask {
-                                replacer = Some(if trailing {
-                                    format!("{}/", https_document_replacement)
-                                } else {
-                                    https_document_replacement
-                                });
-                            }
-                        }
-
-                        if self.document_target_domain.is_empty() && current_url.ends_with(".xml") {
-                            self.xml_document = true;
-                        }
-
-                        self.document_target_domain = event.request.url.clone();
-                    }
-
-                    let current_url = match &replacer {
-                        Some(r) => r,
-                        _ => &event.request.url,
-                    }
-                    .as_str();
-
-                    // main initial check
-                    let skip_networking = if !skip_networking {
-                        // allow sitemap xml building xsl
-                        if self.xml_document && current_url.ends_with(".xsl") {
-                            false
-                        } else {
-                            self.ignore_visuals
-                                && (IGNORE_VISUAL_RESOURCE_MAP
-                                    .contains(event.resource_type.as_ref()))
-                                || self.block_stylesheets
-                                    && ResourceType::Stylesheet == event.resource_type
-                                || self.block_javascript
-                                    && javascript_resource
-                                    && self.intercept_manager == NetworkInterceptManager::Unknown
-                                    && !ALLOWED_MATCHER.is_match(current_url)
-                        }
-                    } else {
-                        skip_networking
-                    };
-
-                    let skip_networking = if !skip_networking {
-                        self.detect_ad(event)
-                    } else {
-                        skip_networking
-                    };
-
-                    let skip_networking = if !skip_networking
-                        && (self.only_html || self.ignore_visuals)
-                        && (javascript_resource || document_resource)
-                    {
-                        ignore_script_embedded(current_url)
-                    } else {
-                        skip_networking
-                    };
-
-                    // analytics check
-                    let skip_networking = if !skip_networking && javascript_resource {
-                        self.ignore_script(
-                            current_url,
-                            self.block_analytics,
-                            self.intercept_manager,
-                        )
-                    } else {
-                        skip_networking
-                    };
-
-                    // XHR check
-                    let skip_networking = self.skip_xhr(skip_networking, &event, network_resource);
-
-                    // custom interception layer.
-                    let skip_networking = if !skip_networking
-                        && (javascript_resource || network_resource || document_resource)
-                    {
-                        self.intercept_manager.intercept_detection(
-                            &event.request.url,
-                            self.ignore_visuals,
-                            network_resource,
-                        )
-                    } else {
-                        skip_networking
-                    };
-
-                    let skip_networking = if !skip_networking
-                        && (javascript_resource || network_resource)
-                    {
-                        crate::handler::blockers::block_websites::block_website(&event.request.url)
-                    } else {
-                        skip_networking
-                    };
-
-                    if skip_networking {
-                        tracing::debug!("Blocked: {:?} - {}", event.resource_type, current_url);
-
-                        let fullfill_params =
-                            crate::handler::network::fetch::FulfillRequestParams::new(
-                                event.request_id.clone(),
-                                200,
-                            );
-                        self.push_cdp_request(fullfill_params);
-                    } else {
-                        tracing::debug!("Allowed: {:?} - {}", event.resource_type, current_url);
-
-                        let mut continue_params =
-                            ContinueRequestParams::new(event.request_id.clone());
-
-                        if replacer.is_some() {
-                            continue_params.url = Some(current_url.into());
-                            continue_params.intercept_response = Some(false);
-                        }
-                    }
-                }
+        // Main initial check (visuals, stylesheets, simple JS blocking).
+        if !skip_networking {
+            // Allow XSL for sitemap XML.
+            if self.xml_document && current_url.ends_with(".xsl") {
+                skip_networking = false;
             } else {
-                self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
+                skip_networking = self.should_skip_for_visuals_and_basic_js(
+                    resource_type,
+                    javascript_resource,
+                    current_url,
+                );
             }
         }
 
-        // if self.only_html {
-        //     self.made_request = true;
-        // }
+        // Ad blocking (only active when feature = "adblock").
+        skip_networking = self.detect_ad_if_enabled(event, skip_networking);
+
+        // Ignore embedded scripts when only_html or ignore_visuals is set.
+        if !skip_networking
+            && (self.only_html || self.ignore_visuals)
+            && (javascript_resource || document_resource)
+        {
+            skip_networking = ignore_script_embedded(current_url);
+        }
+
+        // Analytics check for JS.
+        if !skip_networking && javascript_resource {
+            skip_networking =
+                self.ignore_script(current_url, self.block_analytics, self.intercept_manager);
+        }
+
+        // XHR / data resources.
+        skip_networking = self.skip_xhr(skip_networking, event, network_resource);
+
+        // Custom interception layer.
+        if !skip_networking && (javascript_resource || network_resource || document_resource) {
+            skip_networking = self.intercept_manager.intercept_detection(
+                current_url,
+                self.ignore_visuals,
+                network_resource,
+            );
+        }
+
+        // Custom website block list.
+        if !skip_networking && (javascript_resource || network_resource) {
+            skip_networking = crate::handler::blockers::block_websites::block_website(current_url);
+        }
+
+        if skip_networking {
+            tracing::debug!("Blocked: {:?} - {}", resource_type, current_url);
+            self.fulfill_request_empty_200(&event.request_id);
+        } else {
+            tracing::debug!("Allowed: {:?} - {}", resource_type, current_url);
+            self.continue_request_with_url(
+                &event.request_id,
+                if had_replacer {
+                    Some(current_url)
+                } else {
+                    None
+                },
+                !had_replacer,
+            );
+        }
+    }
+
+    /// Handles:
+    /// - document reload tracking (`document_reload_tracker`)
+    /// - redirect masking / replacement
+    /// - xml document detection (`xml_document`)
+    /// - `document_target_domain` updates
+    ///
+    /// Returns (current_url, had_replacer).
+    #[inline]
+    fn handle_document_replacement_and_tracking<'a>(
+        &mut self,
+        event: &'a EventRequestPaused,
+        document_resource: bool,
+    ) -> (Cow<'a, str>, bool) {
+        let mut replacer: Option<String> = None;
+        let current_url = event.request.url.as_str();
+
+        if document_resource {
+            if self.document_target_domain == current_url {
+                // Prevent redirect loop (3 attempts are considered enough).
+                self.document_reload_tracker += 1;
+            } else if !self.document_target_domain.is_empty()
+                && event.redirected_request_id.is_some()
+            {
+                // Build http/https mask pair for redirect masking.
+                let (http_document_replacement, mut https_document_replacement) =
+                    if self.document_target_domain.starts_with("http://") {
+                        (
+                            self.document_target_domain.replace("http://", "http//"),
+                            self.document_target_domain.replace("http://", "https://"),
+                        )
+                    } else {
+                        (
+                            self.document_target_domain.replace("https://", "https//"),
+                            self.document_target_domain.replace("https://", "http://"),
+                        )
+                    };
+
+                // Track trailing slash to restore later.
+                let trailing = https_document_replacement.ends_with('/');
+                if trailing {
+                    https_document_replacement.pop();
+                }
+                if https_document_replacement.ends_with('/') {
+                    https_document_replacement.pop();
+                }
+
+                let redirect_mask = format!(
+                    "{}{}",
+                    https_document_replacement, http_document_replacement
+                );
+
+                if current_url == redirect_mask {
+                    replacer = Some(if trailing {
+                        format!("{}/", https_document_replacement)
+                    } else {
+                        https_document_replacement
+                    });
+                }
+            }
+
+            if self.document_target_domain.is_empty() && current_url.ends_with(".xml") {
+                self.xml_document = true;
+            }
+
+            // Track last seen document URL.
+            self.document_target_domain = event.request.url.clone();
+        }
+
+        let current_url_cow = match replacer {
+            Some(r) => Cow::Owned(r),
+            None => Cow::Borrowed(event.request.url.as_str()),
+        };
+
+        let had_replacer = matches!(current_url_cow, Cow::Owned(_));
+        (current_url_cow, had_replacer)
+    }
+
+    /// Shared "visuals + basic JS blocking" logic.
+    #[inline]
+    fn should_skip_for_visuals_and_basic_js(
+        &self,
+        resource_type: &ResourceType,
+        javascript_resource: bool,
+        current_url: &str,
+    ) -> bool {
+        (self.ignore_visuals && IGNORE_VISUAL_RESOURCE_MAP.contains(resource_type.as_ref()))
+            || (self.block_stylesheets && *resource_type == ResourceType::Stylesheet)
+            || (self.block_javascript
+                && javascript_resource
+                && self.intercept_manager == NetworkInterceptManager::Unknown
+                && !ALLOWED_MATCHER.is_match(current_url))
     }
 
     /// Perform a page intercept for chrome
@@ -924,6 +818,7 @@ impl NetworkManager {
         }
     }
 
+    /// The request was served from the cache.
     pub fn on_request_served_from_cache(&mut self, event: &EventRequestServedFromCache) {
         if let Some(request) = self.requests.get_mut(event.request_id.as_ref()) {
             request.from_memory_cache = true;
@@ -934,7 +829,7 @@ impl NetworkManager {
     pub fn on_response_received(&mut self, event: &EventResponseReceived) {
         let mut request_failed = false;
 
-        // Track how many bytes we actually deducted from this target
+        // Track how many bytes we actually deducted from this target.
         let mut deducted: u64 = 0;
 
         if let Some(max_bytes) = self.max_bytes_allowed.as_mut() {

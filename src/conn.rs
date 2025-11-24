@@ -123,22 +123,21 @@ impl<T: EventMessage> Connection<T> {
 }
 
 impl<T: EventMessage + Unpin> Stream for Connection<T> {
-    type Item = Result<Message<T>>;
+    type Item = Result<Box<Message<T>>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
 
+        // flush pending outgoing messages
         loop {
-            // queue in the next message if not currently flushing
             if let Err(err) = pin.start_send_next(cx) {
                 return Poll::Ready(Some(Err(err)));
             }
 
-            // send the message
             if let Some(call) = pin.pending_flush.take() {
                 if pin.ws.poll_ready_unpin(cx).is_ready() {
                     pin.needs_flush = true;
-                    // try another flush
+                    // try another flush in this same poll
                     continue;
                 } else {
                     pin.pending_flush = Some(call);
@@ -148,34 +147,14 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
             break;
         }
 
-        // read from the ws
+        // read from the websocket
         match ready!(pin.ws.poll_next_unpin(cx)) {
             Some(Ok(WsMessage::Text(text))) => {
-                let ready = match crate::serde_json::from_str::<Message<T>>(&text) {
-                    Ok(msg) => {
-                        tracing::trace!("Received {:?}", msg);
-                        Ok(msg)
-                    }
-                    Err(err) => {
-                        tracing::error!(target: "chromiumoxide::conn::raw_ws::parse_errors", msg = text.to_string(), "Failed to parse raw WS message {err}");
-                        Err(err.into())
-                    }
-                };
-
+                let ready = decode_message::<T>(text.as_bytes(), Some(&text));
                 Poll::Ready(Some(ready))
             }
-            Some(Ok(WsMessage::Binary(mut text))) => {
-                let ready = match crate::serde_json::from_slice::<Message<T>>(&mut text) {
-                    Ok(msg) => {
-                        tracing::trace!("Received {:?}", msg);
-                        Ok(msg)
-                    }
-                    Err(err) => {
-                        tracing::error!(target: "chromiumoxide::conn::raw_ws::parse_errors", "Failed to parse raw WS message {err}");
-                        Err(err.into())
-                    }
-                };
-
+            Some(Ok(WsMessage::Binary(buf))) => {
+                let ready = decode_message::<T>(&buf, None);
                 Poll::Ready(Some(ready))
             }
             Some(Ok(WsMessage::Close(_))) => Poll::Ready(None),
@@ -190,6 +169,36 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
                 // ws connection closed
                 Poll::Ready(None)
             }
+        }
+    }
+}
+
+/// Shared decode path for both text and binary WS frames.
+/// `raw_text_for_logging` is only provided for textual frames so we can log the original
+/// payload on parse failure if desired.
+fn decode_message<T: EventMessage>(
+    bytes: &[u8],
+    raw_text_for_logging: Option<&str>,
+) -> Result<Box<Message<T>>> {
+    match crate::serde_json::from_slice::<Box<Message<T>>>(bytes) {
+        Ok(msg) => {
+            tracing::trace!("Received {:?}", msg);
+            Ok(msg)
+        }
+        Err(err) => {
+            if let Some(txt) = raw_text_for_logging {
+                tracing::error!(
+                    target: "chromiumoxide::conn::raw_ws::parse_errors",
+                    msg_len = txt.len(),
+                    "Failed to parse raw WS message {err}",
+                );
+            } else {
+                tracing::error!(
+                    target: "chromiumoxide::conn::raw_ws::parse_errors",
+                    "Failed to parse binary WS message {err}",
+                );
+            }
+            Err(err.into())
         }
     }
 }

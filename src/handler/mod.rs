@@ -671,16 +671,17 @@ impl Stream for Handler {
 
             while let Poll::Ready(Some(ev)) = Pin::new(&mut pin.conn).poll_next(cx) {
                 match ev {
-                    Ok(Message::Response(resp)) => {
-                        pin.on_response(resp);
-                        if pin.closing {
-                            // handler should stop processing
-                            return Poll::Ready(None);
+                    Ok(boxed_msg) => match *boxed_msg {
+                        Message::Response(resp) => {
+                            pin.on_response(resp);
+                            if pin.closing {
+                                return Poll::Ready(None);
+                            }
                         }
-                    }
-                    Ok(Message::Event(ev)) => {
-                        pin.on_event(ev);
-                    }
+                        Message::Event(ev) => {
+                            pin.on_event(ev);
+                        }
+                    },
                     Err(err) => {
                         tracing::error!("WS Connection error: {:?}", err);
                         match err {
