@@ -1,3 +1,5 @@
+pub use http_global_cache::CACACHE_MANAGER;
+
 use crate::cache::remote::dump_to_remote_cache;
 use crate::http::{convert_headers, HttpRequestLike, HttpResponse, HttpResponseLike, HttpVersion};
 use crate::{
@@ -11,7 +13,6 @@ use crate::{
 use base64::{engine::general_purpose, Engine as _};
 use chromiumoxide_cdp::cdp::browser_protocol::fetch::{RequestPattern, RequestStage};
 use http_cache_reqwest::CacheManager;
-pub use http_global_cache::CACACHE_MANAGER;
 use reqwest::StatusCode;
 use spider_fingerprint::http;
 use std::collections::HashMap;
@@ -285,15 +286,35 @@ pub async fn put_hybrid_cache(
         tracing::debug!("Storing cache {:?}", http_response.url.as_str());
 
         if dump_remote.is_some() {
-            dump_to_remote_cache(
-                cache_key,
-                cache_site,
-                &http_response,
-                method,
-                &http_request_headers,
-                dump_remote,
-            )
+            // check if the value is in the cache and not stale to dump it
+            let result = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+                CACACHE_MANAGER.get(&cache_key).await
+            })
             .await;
+
+            let mut put_cache = false;
+
+            if let Ok(cached) = result {
+                if let Ok(Some((_http_response, stored_policy))) = cached {
+                    if stored_policy.is_stale(SystemTime::now()) {
+                        put_cache = true;
+                    }
+                }
+            } else {
+                put_cache = true;
+            }
+
+            if put_cache {
+                dump_to_remote_cache(
+                    cache_key,
+                    cache_site,
+                    &http_response,
+                    method,
+                    &http_request_headers,
+                    dump_remote,
+                )
+                .await;
+            }
         }
 
         // Finally, store in your existing local cache.
@@ -501,7 +522,7 @@ pub async fn spawn_fetch_cache_interceptor(
     policy: Option<BasicCachePolicy>,
     cache_strategy: Option<CacheStrategy>,
 ) -> Result<JoinHandle<()>, crate::error::CdpError> {
-    page.execute(crate::cdp::browser_protocol::fetch::EnableParams {
+    page.send_command(crate::cdp::browser_protocol::fetch::EnableParams {
         handle_auth_requests: Some(false),
         patterns: Some(vec![
             RequestPattern {

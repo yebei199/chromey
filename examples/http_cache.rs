@@ -55,25 +55,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         test_url, dur_first
     );
 
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     // allow allow even resources that should not be cached.
     let cache_policy = BasicCachePolicy::AllowStale;
 
-    page.spawn_cache_intercepter(None, Some(cache_policy), Some(cache_strat))
-        .await?;
-
-    tokio::time::sleep(Duration::from_secs(4)).await;
-
     // ---- Second run (warm, via cache interceptor) ----
-
     // enable fetch → cache interceptor before second navigation
 
     let start_second = Instant::now();
 
     println!("Attempting second navigation");
 
-    page.goto_with_cache_fast_seed(test_url, None, None).await?;
-
-    let html2 = page.wait_for_navigation().await?.content().await?;
+    let html2 = page
+        .goto_with_cache_remote(test_url, None, Some(cache_policy), Some(cache_strat), None)
+        .await?
+        .wait_for_navigation()
+        .await?
+        .content()
+        .await?;
 
     let dur_second = start_second.elapsed();
 

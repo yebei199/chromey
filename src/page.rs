@@ -569,6 +569,37 @@ impl Page {
         Ok(self)
     }
 
+    /// Navigate directly to the given URL concurrenctly checking the cache, seeding, and dumping.
+    ///
+    /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
+    #[cfg(feature = "cache")]
+    pub async fn goto_with_cache_remote(
+        &self,
+        params: impl Into<NavigateParams>,
+        auth_opt: Option<&str>,
+        cache_policy: Option<crate::cache::BasicCachePolicy>,
+        cache_strategy: Option<crate::cache::CacheStrategy>,
+        remote: Option<&str>,
+    ) -> Result<&Self> {
+        let remote = remote.or(Some("true"));
+        let navigate_params = params.into();
+        let target_url = navigate_params.url.clone();
+
+        let _ = tokio::join!(
+            self.spawn_cache_listener(
+                &target_url,
+                None,
+                cache_strategy.clone(),
+                remote.map(|f| f.into())
+            ),
+            self.spawn_cache_intercepter(None, cache_policy, cache_strategy),
+            self.seed_cache(&target_url, auth_opt, remote),
+            self.goto_with_cache(navigate_params, auth_opt)
+        );
+
+        Ok(self)
+    }
+
     /// Navigate directly to the given URL concurrenctly checking the cache and seeding.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
@@ -2411,6 +2442,7 @@ impl Page {
     #[cfg(feature = "cache")]
     /// Spawn a cache listener to store resources to memory. This does nothing without the 'cache' flag.
     /// You can pass an endpoint to `dump_remote` to store the cache to a url endpoint.
+    /// The cache_site is used to track all the urls from the point of navigation like page.goto.
     /// Set the value to Some("true") to use the default endpoint.
     pub async fn spawn_cache_listener(
         &self,
@@ -2418,9 +2450,8 @@ impl Page {
         auth: Option<String>,
         cache_strategy: Option<crate::cache::CacheStrategy>,
         dump_remote: Option<String>,
-    ) -> Result<&Self> {
-        use crate::cache::spawn_response_cache_listener;
-        spawn_response_cache_listener(
+    ) -> Result<tokio::task::JoinHandle<()>, crate::error::CdpError> {
+        let handle = crate::cache::spawn_response_cache_listener(
             self.clone(),
             cache_site.into(),
             auth,
@@ -2428,7 +2459,8 @@ impl Page {
             dump_remote,
         )
         .await?;
-        Ok(self)
+
+        Ok(handle)
     }
 
     #[cfg(feature = "cache")]
