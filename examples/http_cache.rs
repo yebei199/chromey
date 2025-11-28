@@ -1,4 +1,5 @@
 // RUST_LOG=debug cargo run --example http_cache --features="cache"
+// startup the [hybrid_cache_server](https://github.com/spider-rs/hybrid_cache_server)
 use chromiumoxide::{
     browser::Browser,
     cache::{BasicCachePolicy, CacheStrategy},
@@ -12,13 +13,12 @@ use std::time::{Duration, Instant};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cache_strat = CacheStrategy::Scraping;
-    let request_intercept = true;
 
     let (browser, mut handler) = Browser::connect_with_config(
         "http://localhost:9223",
         HandlerConfig {
             // todo: the handler configs from intercept need to move over to prevent conflicts.
-            request_intercept,
+            request_intercept: true,
             // rely only on the global memory cache.
             cache_enabled: false,
             ..Default::default()
@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Attempting second navigation");
 
     let html2 = page
-        .goto_with_cache_remote(
+        .goto_with_cache_remote_intercept_enabled(
             test_url,
             None,
             Some(cache_policy.clone()),
@@ -121,20 +121,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Main size: {:?}", html.len());
     println!("Cached size: {:?}", html2.len());
-
-    let html2: String = page
-        .goto_with_cache_remote(
-            "https://example.com",
-            None,
-            Some(cache_policy),
-            Some(cache_strat),
-            None,
-        )
-        .await?
-        .wait_for_navigation()
-        .await?
-        .content()
-        .await?;
 
     handle.await?;
     Ok(())

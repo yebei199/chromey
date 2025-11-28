@@ -3,6 +3,8 @@ use super::blockers::{
     xhr::IGNORE_XHR_ASSETS,
 };
 use crate::auth::Credentials;
+#[cfg(feature = "cache")]
+use crate::cache::BasicCachePolicy;
 use crate::cmd::CommandChain;
 use crate::handler::http::HttpRequest;
 use aho_corasick::AhoCorasick;
@@ -210,8 +212,12 @@ pub struct NetworkManager {
     pub document_target_domain: String,
     /// The max bytes to receive.
     pub max_bytes_allowed: Option<u64>,
+    #[cfg(feature = "cache")]
     /// The cache site_key to use.
     pub cache_site_key: Option<String>,
+    /// The cache policy to use.
+    #[cfg(feature = "cache")]
+    pub cache_policy: Option<BasicCachePolicy>,
 }
 
 impl NetworkManager {
@@ -241,7 +247,10 @@ impl NetworkManager {
             document_reload_tracker: 0,
             document_target_domain: String::new(),
             max_bytes_allowed: None,
+            #[cfg(feature = "cache")]
             cache_site_key: None,
+            #[cfg(feature = "cache")]
+            cache_policy: None,
         }
     }
 
@@ -306,8 +315,15 @@ impl NetworkManager {
     }
 
     /// Set the cache site key.
+    #[cfg(feature = "cache")]
     pub fn set_cache_site_key(&mut self, cache_site_key: Option<String>) {
         self.cache_site_key = cache_site_key;
+    }
+
+    /// Set the cache policy.
+    #[cfg(feature = "cache")]
+    pub fn set_cache_policy(&mut self, cache_policy: Option<BasicCachePolicy>) {
+        self.cache_policy = cache_policy;
     }
 
     pub fn update_protocol_cache_disabled(&mut self) {
@@ -497,20 +513,6 @@ impl NetworkManager {
         self.push_cdp_request(params);
     }
 
-    // Optional: when cache feature is OFF, keep callsites compiling if you
-    // accidentally call it (it becomes a no-op).
-    #[cfg(not(feature = "cache"))]
-    #[inline]
-    fn fulfill_request_from_cache(
-        &mut self,
-        _request_id: &chromiumoxide_cdp::cdp::browser_protocol::fetch::RequestId,
-        _body: &[u8],
-        _headers: &std::collections::HashMap<String, String>,
-        _status: i64,
-    ) {
-        // cache feature disabled
-    }
-
     #[cfg(feature = "cache")]
     #[inline]
     /// Fulfill a paused Fetch request from cached bytes + header map.
@@ -667,17 +669,27 @@ impl NetworkManager {
         } else {
             #[cfg(feature = "cache")]
             {
-                if let Some(cache_site_key) = self.cache_site_key.as_deref() {
-                    if let Some((res, _cache_policy)) =
-                        crate::cache::remote::get_session_cache_item(cache_site_key, current_url)
+                if let (Some(policy), Some(cache_site_key)) =
+                    (self.cache_policy.as_ref(), self.cache_site_key.as_deref())
+                {
+                    let current_url = format!("{}:{}", event.request.method, &current_url);
+
+                    if let Some((res, cache_policy)) =
+                        crate::cache::remote::get_session_cache_item(cache_site_key, &current_url)
                     {
-                        tracing::debug!("Remote Cached: {:?} - {}", resource_type, current_url);
-                        return self.fulfill_request_from_cache(
-                            &event.request_id,
-                            &res.body,
-                            &res.headers,
-                            res.status as i64,
-                        );
+                        if policy.allows_cached(&cache_policy) {
+                            tracing::debug!(
+                                "Remote Cached: {:?} - {}",
+                                resource_type,
+                                &current_url
+                            );
+                            return self.fulfill_request_from_cache(
+                                &event.request_id,
+                                &res.body,
+                                &res.headers,
+                                res.status as i64,
+                            );
+                        }
                     }
                 }
             }

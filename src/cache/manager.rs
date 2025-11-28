@@ -234,6 +234,21 @@ pub enum BasicCachePolicy {
     Normal,
 }
 
+impl BasicCachePolicy {
+    /// Decide whether a cached entry is usable right now.
+    #[inline]
+    pub fn allows_cached(&self, cache_policy: &http_cache_semantics::CachePolicy) -> bool {
+        match self {
+            // caller accepts staleness
+            BasicCachePolicy::AllowStale => true,
+            // use injected time for determinism/testing
+            BasicCachePolicy::Period(now) => !cache_policy.is_stale(*now),
+            // default behavior: must not be stale at real "now"
+            BasicCachePolicy::Normal => !cache_policy.is_stale(SystemTime::now()),
+        }
+    }
+}
+
 /// Get a cached url with headers.
 pub async fn get_cached_url_with_metadata(
     target_url: &str,

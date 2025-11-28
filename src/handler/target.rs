@@ -602,8 +602,10 @@ impl Target {
                                     .collect(),
                             );
                         }
-                        TargetMessage::CacheKey(cache_key) => {
+                        #[cfg(feature = "cache")]
+                        TargetMessage::CacheKey((cache_key, cache_policy)) => {
                             self.network_manager.set_cache_site_key(cache_key);
+                            self.network_manager.set_cache_policy(cache_policy);
                         }
                         TargetMessage::Url(req) => {
                             let GetUrl { frame_id, tx } = req;
@@ -985,8 +987,9 @@ pub enum TargetMessage {
     MainFrame(Sender<Option<FrameId>>),
     /// Return all the frames of this target's page
     AllFrames(Sender<Vec<FrameId>>),
-    /// Set the cache key for the target page.
-    CacheKey(Option<String>),
+    #[cfg(feature = "cache")]
+    /// Set the cache key and policy for the target page.
+    CacheKey((Option<String>, Option<crate::cache::BasicCachePolicy>)),
     /// Return the url if available
     Url(GetUrl),
     /// Return the name if available

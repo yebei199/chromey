@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Remote Caching
 
-Enable remote caching by using the [hybrid-cache-server](https://github.com/spider-rs/hybrid-cache-server) and set the `HYBRID_CACHE_ENDPOINT` env variable ex: HYBRID_CACHE_ENDPOINT=http://remote-cache:8080. Use the remote cache methods to for collecting data.
+Enable remote caching by using the [hybrid_cache_server](https://github.com/spider-rs/hybrid_cache_server) crate and set the `HYBRID_CACHE_ENDPOINT` env variable ex: HYBRID_CACHE_ENDPOINT=http://remote-cache:8080. Use the remote cache methods to for collecting data.
 
 ## License
 

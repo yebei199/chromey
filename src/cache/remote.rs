@@ -11,6 +11,7 @@ use reqwest::header::HeaderValue;
 use reqwest::Method;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use url::Url;
 
 lazy_static! {
@@ -19,7 +20,6 @@ lazy_static! {
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build()
         .expect("failed to build HYBRID_CACHE_CLIENT");
-
     /// Base URL of your remote hybrid cache server.
     ///
     /// Example: "http://127.0.0.1:8080"
@@ -28,9 +28,10 @@ lazy_static! {
     ///   HYBRID_CACHE_ENDPOINT=http://remote-cache:8080
     pub static ref HYBRID_CACHE_ENDPOINT: String = std::env::var("HYBRID_CACHE_ENDPOINT")
         .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-
     /// The local session cache per run cleared.
     pub static ref LOCAL_SESSION_CACHE: dashmap::DashMap<String, HashMap<String, (http_cache_reqwest::HttpResponse, CachePolicy)>> = dashmap::DashMap::new();
+    /// Max concurrent remote cache dumps across the whole process.
+    pub static ref REMOTE_CACHE_DUMP_SEM: Semaphore = Semaphore::new(1000);
 }
 
 /// Payload shape for the remote hybrid cache server `/cache/index` endpoint.
@@ -62,7 +63,11 @@ pub async fn dump_to_remote_cache_parts(
     http_version: &HttpVersion,
     dump_remote: Option<&str>,
 ) {
-    // If URL parsing fails, website_key becomes None (same as your original intent).
+    let _permit = match REMOTE_CACHE_DUMP_SEM.acquire().await {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
     let website_key = url::Url::parse(url_str)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()));
@@ -238,18 +243,21 @@ pub fn session_cache_insert(
     cache_key: &str,
     http_res: http_cache_reqwest::HttpResponse,
     cache_policy: CachePolicy,
+    entry_key: &str,
 ) {
     use dashmap::mapref::entry::Entry;
-    let entry_key = http_res.url.to_string();
 
     match LOCAL_SESSION_CACHE.entry(cache_key.to_string()) {
         Entry::Occupied(mut occ) => {
-            occ.get_mut().insert(entry_key, (http_res, cache_policy));
+            occ.get_mut()
+                .insert(entry_key.into(), (http_res, cache_policy));
         }
         Entry::Vacant(vac) => {
             let mut m: HashMap<String, (http_cache_reqwest::HttpResponse, CachePolicy)> =
                 HashMap::new();
-            m.insert(entry_key, (http_res, cache_policy));
+
+            m.insert(entry_key.into(), (http_res, cache_policy));
+
             vac.insert(m);
         }
     }
@@ -297,7 +305,9 @@ async fn seed_payload_into_local_cache(
 
     let key = payload.resource_key.clone();
 
-    session_cache_insert(cache_key, http_res.clone(), policy.clone());
+    let session_key = format!("{}:{}", payload.method, http_res.url);
+
+    session_cache_insert(cache_key, http_res.clone(), policy.clone(), &session_key);
 
     let put_result = CACACHE_MANAGER.put(key.clone(), http_res, policy).await;
 
@@ -310,10 +320,10 @@ async fn seed_payload_into_local_cache(
 
 /// Get the resource from the cache. TODO: add different methods.
 pub fn get_session_cache_item(
-    target_url: &str,
     cache_key: &str,
+    target_url: &str,
 ) -> Option<(http_cache_reqwest::HttpResponse, CachePolicy)> {
     LOCAL_SESSION_CACHE
-        .get(target_url)
-        .and_then(|local_cache| local_cache.get(cache_key).cloned())
+        .get(cache_key)
+        .and_then(|local_cache| local_cache.get(target_url).cloned())
 }

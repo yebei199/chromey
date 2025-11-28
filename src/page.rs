@@ -625,6 +625,7 @@ impl Page {
     pub async fn goto_with_cache_fast_seed(
         &self,
         params: impl Into<NavigateParams>,
+        cache_policy: Option<crate::cache::BasicCachePolicy>,
         auth_opt: Option<&str>,
         remote: Option<&str>,
     ) -> Result<&Self> {
@@ -634,10 +635,64 @@ impl Page {
         let target_url = navigate_params.url.clone();
         let cache_site = site_key_for_target_url(&target_url, auth_opt);
 
-        let _ = self.set_cache_key(Some(cache_site.clone())).await;
+        let _ = self
+            .set_cache_key((Some(cache_site.clone()), cache_policy))
+            .await;
 
         let _ = tokio::join!(
-            self.seed_cache(&cache_site, auth_opt, remote),
+            self.seed_cache(&target_url, auth_opt, remote),
+            self.goto_with_cache(navigate_params, auth_opt)
+        );
+
+        let _ = self.clear_local_cache(&cache_site);
+
+        Ok(self)
+    }
+
+    /// Navigate directly to the given URL concurrenctly checking the cache, seeding, and dumping.
+    ///
+    /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
+    #[cfg(feature = "cache")]
+    pub async fn _goto_with_cache_remote(
+        &self,
+        params: impl Into<NavigateParams>,
+        auth_opt: Option<&str>,
+        cache_policy: Option<crate::cache::BasicCachePolicy>,
+        cache_strategy: Option<crate::cache::CacheStrategy>,
+        remote: Option<&str>,
+        intercept_enabled: Option<bool>,
+    ) -> Result<&Self> {
+        let remote = remote.or(Some("true"));
+        let navigate_params = params.into();
+        let target_url = navigate_params.url.clone();
+
+        let cache_site = crate::cache::manager::site_key_for_target_url(&target_url, auth_opt);
+
+        let _ = self
+            .set_cache_key((Some(cache_site.clone()), cache_policy.clone()))
+            .await;
+
+        let run_intercept = async {
+            if intercept_enabled.unwrap_or(true) {
+                let _ = self
+                    .spawn_cache_intercepter(
+                        auth_opt.map(|f| f.into()),
+                        cache_policy,
+                        cache_strategy,
+                    )
+                    .await;
+            }
+        };
+
+        let _ = tokio::join!(
+            self.spawn_cache_listener(
+                &cache_site,
+                auth_opt.map(|f| f.into()),
+                cache_strategy.clone(),
+                remote.map(|f| f.into())
+            ),
+            run_intercept,
+            self.seed_cache(&target_url, auth_opt, remote),
             self.goto_with_cache(navigate_params, auth_opt)
         );
 
@@ -658,32 +713,90 @@ impl Page {
         cache_strategy: Option<crate::cache::CacheStrategy>,
         remote: Option<&str>,
     ) -> Result<&Self> {
-        let remote = remote.or(Some("true"));
-        let navigate_params = params.into();
-        let target_url = navigate_params.url.clone();
+        self._goto_with_cache_remote(
+            params,
+            auth_opt,
+            cache_policy,
+            cache_strategy,
+            remote,
+            Some(true),
+        )
+        .await
+    }
 
+    /// Navigate directly to the given URL concurrenctly checking the cache, seeding, and dumping. Enable this if you connect with request interception.
+    ///
+    /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
+    #[cfg(feature = "cache")]
+    pub async fn goto_with_cache_remote_intercept_enabled(
+        &self,
+        params: impl Into<NavigateParams>,
+        auth_opt: Option<&str>,
+        cache_policy: Option<crate::cache::BasicCachePolicy>,
+        cache_strategy: Option<crate::cache::CacheStrategy>,
+        remote: Option<&str>,
+    ) -> Result<&Self> {
+        self._goto_with_cache_remote(
+            params,
+            auth_opt,
+            cache_policy,
+            cache_strategy,
+            remote,
+            Some(false),
+        )
+        .await
+    }
+
+    /// Execute a command and return the `Command::Response` with caching.
+    /// Use page.spawn_cache_intercepter if you do not have interception enabled beforehand to use the cache responses.
+    /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
+    #[cfg(feature = "cache")]
+    async fn _http_future_with_cache(
+        &self,
+        navigate_params: crate::cdp::browser_protocol::page::NavigateParams,
+        auth_opt: Option<&str>,
+        cache_policy: Option<crate::cache::BasicCachePolicy>,
+        cache_strategy: Option<crate::cache::CacheStrategy>,
+        remote: Option<&str>,
+        intercept_enabled: Option<bool>,
+    ) -> Result<Arc<crate::HttpRequest>> {
+        let remote = remote.or(Some("true"));
+        let target_url = navigate_params.url.clone();
         let cache_site = crate::cache::manager::site_key_for_target_url(&target_url, auth_opt);
 
-        let _ = self.set_cache_key(Some(cache_site.clone())).await;
+        let _ = self
+            .set_cache_key((Some(cache_site.clone()), cache_policy.clone()))
+            .await;
 
-        let _ = tokio::join!(
+        let run_intercept = async {
+            if intercept_enabled.unwrap_or(true) {
+                let _ = self
+                    .spawn_cache_intercepter(
+                        auth_opt.map(|f| f.into()),
+                        cache_policy,
+                        cache_strategy,
+                    )
+                    .await;
+            }
+        };
+
+        let (_, __, ___, cache_future) = tokio::join!(
             self.spawn_cache_listener(
                 &cache_site,
                 auth_opt.map(|f| f.into()),
                 cache_strategy.clone(),
                 remote.map(|f| f.into())
             ),
-            self.spawn_cache_intercepter(auth_opt.map(|f| f.into()), cache_policy, cache_strategy),
-            self.seed_cache(&cache_site, auth_opt, remote),
-            self.goto_with_cache(navigate_params, auth_opt)
+            run_intercept,
+            self.seed_cache(&target_url, auth_opt, remote),
+            self.goto_with_cache_http_future(navigate_params, auth_opt)
         );
 
         let _ = self.clear_local_cache(&cache_site);
-
-        Ok(self)
+        cache_future
     }
 
-    /// Execute a command and return the `Command::Response` with caching.
+    /// Execute a command and return the `Command::Response` with caching. Enable this if you connect with request interception.
     /// Use page.spawn_cache_intercepter if you do not have interception enabled beforehand to use the cache responses.
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
     #[cfg(feature = "cache")]
@@ -695,29 +808,38 @@ impl Page {
         cache_strategy: Option<crate::cache::CacheStrategy>,
         remote: Option<&str>,
     ) -> Result<Arc<crate::HttpRequest>> {
-        let remote = remote.or(Some("true"));
-        let target_url = navigate_params.url.clone();
+        self._http_future_with_cache(
+            navigate_params,
+            auth_opt,
+            cache_policy,
+            cache_strategy,
+            remote,
+            Some(true),
+        )
+        .await
+    }
 
-        let cache_site = crate::cache::manager::site_key_for_target_url(&target_url, auth_opt);
-
-        // we have to set the cache policy here too.
-        let _ = self.set_cache_key(Some(cache_site.clone())).await;
-
-        let (_, __, ___, cache_future) = tokio::join!(
-            self.spawn_cache_listener(
-                &cache_site,
-                auth_opt.map(|f| f.into()),
-                cache_strategy.clone(),
-                remote.map(|f| f.into())
-            ),
-            self.spawn_cache_intercepter(auth_opt.map(|f| f.into()), cache_policy, cache_strategy),
-            self.seed_cache(&cache_site, auth_opt, remote),
-            self.goto_with_cache_http_future(navigate_params, auth_opt)
-        );
-
-        let _ = self.clear_local_cache(&cache_site);
-
-        cache_future
+    /// Execute a command and return the `Command::Response` with caching.
+    /// Use page.spawn_cache_intercepter if you do not have interception enabled beforehand to use the cache responses.
+    /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
+    #[cfg(feature = "cache")]
+    pub async fn http_future_with_cache_intercept_enabled(
+        &self,
+        navigate_params: crate::cdp::browser_protocol::page::NavigateParams,
+        auth_opt: Option<&str>,
+        cache_policy: Option<crate::cache::BasicCachePolicy>,
+        cache_strategy: Option<crate::cache::CacheStrategy>,
+        remote: Option<&str>,
+    ) -> Result<Arc<crate::HttpRequest>> {
+        self._http_future_with_cache(
+            navigate_params,
+            auth_opt,
+            cache_policy,
+            cache_strategy,
+            remote,
+            Some(false),
+        )
+        .await
     }
 
     /// Navigate directly to the given URL concurrenctly checking the cache and seeding.
@@ -728,6 +850,7 @@ impl Page {
         &self,
         params: impl Into<NavigateParams>,
         auth_opt: Option<&str>,
+        cache_policy: Option<crate::cache::BasicCachePolicy>,
         remote: Option<&str>,
     ) -> Result<&Self> {
         let navigate_params = params.into();
@@ -735,9 +858,13 @@ impl Page {
 
         let cache_site = crate::cache::manager::site_key_for_target_url(&navigation_url, auth_opt);
 
-        let _ = self.set_cache_key(Some(cache_site.clone())).await;
+        let _ = self
+            .set_cache_key((Some(cache_site.clone()), cache_policy.clone()))
+            .await;
+
         self.seed_cache(&navigation_url, auth_opt.clone(), remote)
             .await?;
+
         self.goto_with_cache(navigate_params, auth_opt).await?;
         let _ = self.clear_local_cache_with_key(&navigation_url, auth_opt);
         Ok(self)
@@ -872,7 +999,11 @@ impl Page {
     }
 
     /// Set the cache key of the page
-    pub async fn set_cache_key(&self, cache_key: Option<String>) -> Result<()> {
+    #[cfg(feature = "cache")]
+    pub async fn set_cache_key(
+        &self,
+        cache_key: (Option<String>, Option<crate::cache::BasicCachePolicy>),
+    ) -> Result<()> {
         self.inner
             .sender()
             .clone()
