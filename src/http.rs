@@ -70,7 +70,7 @@ impl From<Option<&str>> for HttpVersion {
     }
 }
 
-#[cfg(feature = "cache")]
+#[cfg(feature = "_cache")]
 impl From<HttpVersion> for http_cache::HttpVersion {
     fn from(v: HttpVersion) -> Self {
         match v {

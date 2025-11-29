@@ -65,9 +65,9 @@
 pub mod async_process;
 pub mod auth;
 pub mod browser;
-#[cfg(feature = "cache")]
+#[cfg(feature = "_cache")]
 pub mod cache;
-#[cfg(feature = "cache")]
+#[cfg(feature = "_cache")]
 pub mod http;
 
 pub(crate) mod cmd;
@@ -123,5 +123,5 @@ pub use serde_json;
 pub use sonic_rs as serde_json;
 
 /// Init the cache global worker.
-#[cfg(feature = "cache")]
+#[cfg(feature = "_cache")]
 pub use cache::dump_remote::init_default_cache_worker;

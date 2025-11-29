@@ -3,7 +3,7 @@ use super::blockers::{
     xhr::IGNORE_XHR_ASSETS,
 };
 use crate::auth::Credentials;
-#[cfg(feature = "cache")]
+#[cfg(feature = "_cache")]
 use crate::cache::BasicCachePolicy;
 use crate::cmd::CommandChain;
 use crate::handler::http::HttpRequest;
@@ -212,11 +212,11 @@ pub struct NetworkManager {
     pub document_target_domain: String,
     /// The max bytes to receive.
     pub max_bytes_allowed: Option<u64>,
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     /// The cache site_key to use.
     pub cache_site_key: Option<String>,
     /// The cache policy to use.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub cache_policy: Option<BasicCachePolicy>,
 }
 
@@ -247,9 +247,9 @@ impl NetworkManager {
             document_reload_tracker: 0,
             document_target_domain: String::new(),
             max_bytes_allowed: None,
-            #[cfg(feature = "cache")]
+            #[cfg(feature = "_cache")]
             cache_site_key: None,
-            #[cfg(feature = "cache")]
+            #[cfg(feature = "_cache")]
             cache_policy: None,
         }
     }
@@ -315,13 +315,13 @@ impl NetworkManager {
     }
 
     /// Set the cache site key.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub fn set_cache_site_key(&mut self, cache_site_key: Option<String>) {
         self.cache_site_key = cache_site_key;
     }
 
     /// Set the cache policy.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub fn set_cache_policy(&mut self, cache_policy: Option<BasicCachePolicy>) {
         self.cache_policy = cache_policy;
     }
@@ -513,7 +513,7 @@ impl NetworkManager {
         self.push_cdp_request(params);
     }
 
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     #[inline]
     /// Fulfill a paused Fetch request from cached bytes + header map.
     ///
@@ -667,7 +667,7 @@ impl NetworkManager {
             tracing::debug!("Blocked: {:?} - {}", resource_type, current_url);
             self.fulfill_request_empty_200(&event.request_id);
         } else {
-            #[cfg(feature = "cache")]
+            #[cfg(feature = "_cache")]
             {
                 if let (Some(policy), Some(cache_site_key)) =
                     (self.cache_policy.as_ref(), self.cache_site_key.as_deref())

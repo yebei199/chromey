@@ -602,7 +602,7 @@ impl Target {
                                     .collect(),
                             );
                         }
-                        #[cfg(feature = "cache")]
+                        #[cfg(feature = "_cache")]
                         TargetMessage::CacheKey((cache_key, cache_policy)) => {
                             self.network_manager.set_cache_site_key(cache_key);
                             self.network_manager.set_cache_policy(cache_policy);
@@ -987,7 +987,7 @@ pub enum TargetMessage {
     MainFrame(Sender<Option<FrameId>>),
     /// Return all the frames of this target's page
     AllFrames(Sender<Vec<FrameId>>),
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     /// Set the cache key and policy for the target page.
     CacheKey((Option<String>, Option<crate::cache::BasicCachePolicy>)),
     /// Return the url if available

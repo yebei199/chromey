@@ -1,6 +1,6 @@
 [package]
 name = "chromey"
-version = "2.37.164"
+version = "2.37.166"
 rust-version = "1.70"
 authors = ["j-mendez <jeff@spider.cloud>"]
 edition = "2021"
@@ -114,6 +114,7 @@ _cache = [
     "dep:dashmap"
     ]
 cache = ["_cache", "http-global-cache/cache"]
+cache_mem = ["_cache", "http-global-cache/cache_mem"]
 serde_stacker = ["dep:serde_stacker", "serde_json/unbounded_depth"]
 
 # Temporary features until cargo weak dependencies bug is fixed

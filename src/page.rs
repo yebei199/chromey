@@ -506,7 +506,7 @@ impl Page {
     /// Navigate directly to the given URL checking the HTTP cache first.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn goto_with_cache(
         &self,
         params: impl Into<NavigateParams>,
@@ -553,7 +553,7 @@ impl Page {
     /// Navigate directly to the given URL checking the HTTP cache first.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn goto_with_cache_http_future(
         &self,
         params: impl Into<NavigateParams>,
@@ -621,7 +621,7 @@ impl Page {
     /// Navigate directly to the given URL concurrenctly checking the cache and seeding.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn goto_with_cache_fast_seed(
         &self,
         params: impl Into<NavigateParams>,
@@ -652,7 +652,7 @@ impl Page {
     /// Navigate directly to the given URL concurrenctly checking the cache, seeding, and dumping.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn _goto_with_cache_remote(
         &self,
         params: impl Into<NavigateParams>,
@@ -704,7 +704,7 @@ impl Page {
     /// Navigate directly to the given URL concurrenctly checking the cache, seeding, and dumping.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn goto_with_cache_remote(
         &self,
         params: impl Into<NavigateParams>,
@@ -727,7 +727,7 @@ impl Page {
     /// Navigate directly to the given URL concurrenctly checking the cache, seeding, and dumping. Enable this if you connect with request interception.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn goto_with_cache_remote_intercept_enabled(
         &self,
         params: impl Into<NavigateParams>,
@@ -750,7 +750,7 @@ impl Page {
     /// Execute a command and return the `Command::Response` with caching.
     /// Use page.spawn_cache_intercepter if you do not have interception enabled beforehand to use the cache responses.
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     async fn _http_future_with_cache(
         &self,
         navigate_params: crate::cdp::browser_protocol::page::NavigateParams,
@@ -799,7 +799,7 @@ impl Page {
     /// Execute a command and return the `Command::Response` with caching. Enable this if you connect with request interception.
     /// Use page.spawn_cache_intercepter if you do not have interception enabled beforehand to use the cache responses.
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn http_future_with_cache(
         &self,
         navigate_params: crate::cdp::browser_protocol::page::NavigateParams,
@@ -822,7 +822,7 @@ impl Page {
     /// Execute a command and return the `Command::Response` with caching.
     /// Use page.spawn_cache_intercepter if you do not have interception enabled beforehand to use the cache responses.
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn http_future_with_cache_intercept_enabled(
         &self,
         navigate_params: crate::cdp::browser_protocol::page::NavigateParams,
@@ -845,7 +845,7 @@ impl Page {
     /// Navigate directly to the given URL concurrenctly checking the cache and seeding.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn goto_with_cache_seed(
         &self,
         params: impl Into<NavigateParams>,
@@ -873,7 +873,7 @@ impl Page {
     /// Navigate directly to the given URL.
     ///
     /// This resolves directly after the requested URL is fully loaded. Does nothing without the 'cache' feature on.
-    #[cfg(not(feature = "cache"))]
+    #[cfg(not(feature = "_cache"))]
     pub async fn goto_with_cache(
         &self,
         params: impl Into<NavigateParams>,
@@ -999,7 +999,7 @@ impl Page {
     }
 
     /// Set the cache key of the page
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     pub async fn set_cache_key(
         &self,
         cache_key: (Option<String>, Option<crate::cache::BasicCachePolicy>),
@@ -2693,14 +2693,14 @@ impl Page {
         self.inner.secondary_execution_context().await
     }
 
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     /// Clear the local cache after navigation.
     pub async fn clear_local_cache(&self, cache_site: &str) -> Result<&Self> {
         crate::cache::remote::clear_local_session_cache(&cache_site).await;
         Ok(self)
     }
 
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     /// Clear the local cache after navigation with the key
     pub async fn clear_local_cache_with_key(
         &self,
@@ -2715,7 +2715,7 @@ impl Page {
         Ok(self)
     }
 
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     /// Seed the cache. This does nothing without the 'cache' flag.
     pub async fn seed_cache(
         &self,
@@ -2727,7 +2727,7 @@ impl Page {
         Ok(self)
     }
 
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     /// Spawn a cache listener to store resources to memory. This does nothing without the 'cache' flag.
     /// You can pass an endpoint to `dump_remote` to store the cache to a url endpoint.
     /// The cache_site is used to track all the urls from the point of navigation like page.goto.
@@ -2754,7 +2754,7 @@ impl Page {
         Ok(handle)
     }
 
-    #[cfg(feature = "cache")]
+    #[cfg(feature = "_cache")]
     /// Spawn a cache intercepter to load resources to memory. This does nothing without the 'cache' flag.
     pub async fn spawn_cache_intercepter(
         &self,
