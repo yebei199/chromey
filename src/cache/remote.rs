@@ -1,5 +1,3 @@
-use crate::cache::manager::site_key_for_target_url;
-use crate::http::{convert_headers, HttpRequestLike, HttpResponseLike, HttpVersion};
 use base64::engine::general_purpose;
 use base64::prelude::Engine as _;
 use hashbrown::HashMap;
@@ -13,6 +11,9 @@ use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use url::Url;
+
+use crate::cache::manager::site_key_for_target_url;
+use crate::http::{convert_headers, HttpRequestLike, HttpResponseLike, HttpVersion};
 
 lazy_static! {
     /// Global HTTP client reused for all remote cache dumps.
@@ -229,6 +230,77 @@ pub async fn get_cache_site(target_url: &str, auth: Option<&str>, remote: Option
                 err
             );
         }
+    }
+}
+
+/// Get the cache for a resource from the remote cache server and seed
+/// our local hybrid cache (CACACHE_MANAGER) with **all** entries [experimental].
+///
+/// `cache_key` here is the `website_key` used by the remote server,
+/// e.g. "example.com".
+pub async fn get_cache_resource(target_url: &str, auth: Option<&str>, remote: Option<&str>) {
+    let mut base_url = HYBRID_CACHE_ENDPOINT.as_str();
+
+    if let Some(remote) = remote {
+        if remote != "true" {
+            base_url = remote.trim_ascii();
+        }
+    }
+
+    let cache_key = site_key_for_target_url(target_url, auth.as_deref());
+
+    let endpoint = format!("{}/cache/resource/{}", &*base_url, cache_key);
+
+    // Fetch all entries for this website from the remote cache server.
+    let result = HYBRID_CACHE_CLIENT.get(&endpoint).send().await;
+
+    let resp = match result {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::warn!(
+                "remote cache get: failed to GET {} from {}: {}",
+                cache_key,
+                endpoint,
+                err
+            );
+            return;
+        }
+    };
+
+    if !resp.status().is_success() {
+        tracing::warn!(
+            "remote cache get: non-success status for {}: {}",
+            cache_key,
+            resp.status()
+        );
+        return;
+    }
+
+    let payload: Box<HybridCachePayload> = match resp.json().await {
+        Ok(p) => p,
+        Err(err) => {
+            tracing::warn!(
+                "remote cache get: failed to parse JSON for {} from {}: {}",
+                cache_key,
+                endpoint,
+                err
+            );
+            return;
+        }
+    };
+
+    tracing::debug!(
+        "remote cache get: seeding 1 entrie locally for website {}",
+        cache_key
+    );
+
+    if let Err(err) = seed_payload_into_local_cache(&cache_key, &payload, &target_url).await {
+        tracing::warn!(
+            "remote cache get: failed to seed resource {} for website {}: {}",
+            payload.resource_key,
+            cache_key,
+            err
+        );
     }
 }
 

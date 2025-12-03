@@ -5,7 +5,7 @@
 
 A concurrent high-level API to control Chrome or Firefox over the DevTools Protocol.
 
-This project is a fork of [chromiumoxide](https://github.com/mattsse/chromiumoxide) that primarily keeps CDP up to date, applies bug fixes, improves emulation, adblocking, firewalls, performance, and enables high-concurrency CDP capabilities. The project was moved over from [spider](https://github.com/spider-rs/spider) causing the commits to reset.
+This project is a fork of [chromiumoxide](https://github.com/mattsse/chromiumoxide) that primarily keeps CDP up to date, applies bug fixes, improves emulation, adblocking, firewalls, extended features, performance, and enables high-concurrency CDP capabilities. The project was moved over from [spider](https://github.com/spider-rs/spider) causing the commits to reset.
 
 ## Usage
 
@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Remote Caching
 
-Enable remote caching by using the [hybrid_cache_server](https://github.com/spider-rs/hybrid_cache_server) crate and set the `HYBRID_CACHE_ENDPOINT` env variable ex: HYBRID_CACHE_ENDPOINT=http://remote-cache:8080. Use the remote cache methods to for collecting data.
+Enable remote caching by using the [hybrid_cache_server](https://github.com/spider-rs/hybrid_cache_server) crate and set the `HYBRID_CACHE_ENDPOINT` env variable ex: `HYBRID_CACHE_ENDPOINT=http://remote-cache:8080`. Use the remote cache methods to perform navigation or set content.
 
 ## License
 
