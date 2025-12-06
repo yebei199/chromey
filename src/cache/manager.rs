@@ -42,125 +42,126 @@ lazy_static::lazy_static! {
 /// Rewrite the initial base-tag.
 pub async fn rewrite_base_tag(html: &[u8], base_url: &Option<&str>) -> String {
     use lol_html::{element, html_content::ContentType};
-    use std::sync::OnceLock;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicU8, Ordering},
+        Arc,
+    };
 
-    if html.is_empty() {
-        return Default::default();
+    #[inline]
+    fn bytes_to_string(b: &[u8]) -> String {
+        match std::str::from_utf8(b) {
+            Ok(s) => s.to_owned(),
+            Err(_) => String::from_utf8_lossy(b).into_owned(),
+        }
     }
 
-    let base_tag_inserted = OnceLock::new();
-    let already_present = OnceLock::new();
+    if html.is_empty() {
+        return String::new();
+    }
 
-    let base_url_len = base_url.map(|s| s.len());
+    let base_href = match *base_url {
+        Some(s) if !s.is_empty() => s,
+        _ => return bytes_to_string(html),
+    };
 
-    let rewriter_settings: lol_html::Settings<'_, '_, lol_html::send::SendHandlerTypes> =
+    const UNSET: u8 = 0;
+    const INSERTED: u8 = 1;
+    const PRESENT: u8 = 2;
+
+    let state = Arc::new(AtomicU8::new(UNSET));
+    let saw_head = Arc::new(AtomicBool::new(false));
+
+    let base_tag = format!(r#"<base href="{}">"#, base_href);
+    let head_with_base = format!(r#"<head>{}</head>"#, base_tag);
+
+    let mut buffer = Vec::with_capacity(html.len() + base_href.len() + 64);
+
+    let state_for_base = state.clone();
+    let state_for_head = state.clone();
+    let state_for_body = state.clone();
+    let saw_head_for_head = saw_head.clone();
+    let saw_head_for_body = saw_head.clone();
+
+    let settings: lol_html::Settings<'_, '_, lol_html::send::SendHandlerTypes> =
         lol_html::send::Settings {
             element_content_handlers: vec![
-                // Handler for <base> to mark if it is present with href
-                element!("base", {
-                    |el| {
-                        // check base tags that do not exist yet.
-                        if base_tag_inserted.get().is_none() {
-                            // Check if a <base> with href already exists
-                            if let Some(attr) = el.get_attribute("href") {
-                                let valid_http =
-                                    attr.starts_with("http://") || attr.starts_with("https://");
+                element!("base", move |el| {
+                    if state_for_base.load(Ordering::Relaxed) == PRESENT {
+                        el.remove();
+                        return Ok(());
+                    }
 
-                                // we can validate if the domain is the same if not to remove it.
-                                if valid_http {
-                                    let _ = base_tag_inserted.set(true);
-                                    let _ = already_present.set(true);
-                                } else {
-                                    el.remove();
-                                }
-                            } else {
-                                el.remove();
+                    match el.get_attribute("href") {
+                        Some(href)
+                            if href.starts_with("http://") || href.starts_with("https://") =>
+                        {
+                            state_for_base.store(PRESENT, Ordering::Relaxed);
+                        }
+                        _ => el.remove(),
+                    }
+
+                    Ok(())
+                }),
+                element!("head", move |el: &mut lol_html::send::Element<'_, '_>| {
+                    saw_head_for_head.store(true, Ordering::Relaxed);
+
+                    if let Some(handlers) = el.end_tag_handlers() {
+                        let state = state_for_head.clone();
+                        let base_tag = base_tag.clone();
+
+                        handlers.push(Box::new(move |end| {
+                            if state
+                                .compare_exchange(
+                                    UNSET,
+                                    INSERTED,
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                )
+                                .is_ok()
+                            {
+                                end.before(&base_tag, ContentType::Html);
                             }
-                        }
-
-                        Ok(())
+                            Ok(())
+                        }));
                     }
+
+                    Ok(())
                 }),
-                // Handler for <head> to insert <base> tag if not present
-                element!("head", {
-                    |el: &mut lol_html::send::Element<'_, '_>| {
-                        if let Some(handlers) = el.end_tag_handlers() {
-                            let base_tag_inserted = base_tag_inserted.clone();
-                            let base_url =
-                                format!(r#"<base href="{}">"#, base_url.unwrap_or_default());
-
-                            handlers.push(Box::new(move |end| {
-                                if base_tag_inserted.get().is_none() {
-                                    let _ = base_tag_inserted.set(true);
-                                    end.before(&base_url, ContentType::Html);
-                                }
-                                Ok(())
-                            }))
+                element!("body", move |el: &mut lol_html::send::Element<'_, '_>| {
+                    if !saw_head_for_body.load(Ordering::Relaxed) {
+                        if state_for_body
+                            .compare_exchange(UNSET, INSERTED, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok()
+                        {
+                            el.before(&head_with_base, ContentType::Html);
                         }
-                        Ok(())
                     }
-                }),
-                // Handler for html if <head> not present to insert <head><base></head> tag if not present
-                element!("html", {
-                    |el: &mut lol_html::send::Element<'_, '_>| {
-                        if let Some(handlers) = el.end_tag_handlers() {
-                            let base_tag_inserted = base_tag_inserted.clone();
-                            let base_url = format!(
-                                r#"<head><base href="{}"></head>"#,
-                                base_url.unwrap_or_default()
-                            );
-
-                            handlers.push(Box::new(move |end| {
-                                if base_tag_inserted.get().is_none() {
-                                    let _ = base_tag_inserted.set(true);
-                                    end.before(&base_url, ContentType::Html);
-                                }
-                                Ok(())
-                            }))
-                        }
-                        Ok(())
-                    }
+                    Ok(())
                 }),
             ],
             ..lol_html::send::Settings::new_for_handler_types()
         };
 
-    let mut buffer = Vec::with_capacity(
-        html.len()
-            + match base_url_len {
-                Some(l) => l + 29,
-                _ => 0,
-            },
-    );
-
-    let mut rewriter = lol_html::send::HtmlRewriter::new(rewriter_settings, |c: &[u8]| {
+    let mut rewriter = lol_html::send::HtmlRewriter::new(settings, |c: &[u8]| {
         buffer.extend_from_slice(c);
     });
 
-    let mut stream = tokio_stream::iter(html.chunks(*STREAMING_CHUNK_SIZE));
-
-    let mut wrote_error = false;
-
-    while let Some(chunk) = stream.next().await {
-        // early exist
-        if already_present.get().is_some() {
-            break;
+    for chunk in html.chunks(*STREAMING_CHUNK_SIZE) {
+        // If a valid absolute <base href> already exists, keep original HTML exactly.
+        if state.load(Ordering::Relaxed) == PRESENT {
+            return bytes_to_string(html);
         }
         if rewriter.write(chunk).is_err() {
-            wrote_error = true;
-            break;
+            return bytes_to_string(html);
         }
     }
 
-    if !wrote_error {
-        let _ = rewriter.end();
+    if rewriter.end().is_err() {
+        return bytes_to_string(html);
     }
 
-    if already_present.get().is_some() {
-        std::str::from_utf8(&html).unwrap_or_default().into()
-    } else {
-        auto_encoder::auto_encode_bytes(&buffer)
-    }
+    // Your existing helper returned String in the original signature.
+    auto_encoder::auto_encode_bytes(&buffer)
 }
 
 /// Create the cache key from string.
