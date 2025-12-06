@@ -61,6 +61,7 @@ lazy_static! {
         "es2015.",
         "es2020.",
         "webpack",
+        "/cdn-cgi/challenge-platform/",
         "/wp-content/js/",  // Covers Wordpress content
         // Verified 3rd parties for request
         "https://m.stripe.network/",
@@ -81,6 +82,7 @@ lazy_static! {
         // Verified 3rd parties for request
         "https://m.stripe.network/",
         "https://challenges.cloudflare.com/",
+        "/cdn-cgi/challenge-platform/",
         "https://www.google.com/recaptcha/api.js",
         "https://google.com/recaptcha/api.js",
         "https://js.stripe.com/",
