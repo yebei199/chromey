@@ -334,7 +334,7 @@ impl Page {
         self.command_future(cmd)?.await
     }
 
-    /// Execute a command and return the `Command::Response`
+    /// Execute a command without waiting for a response.
     pub async fn send_command<T: Command>(&self, cmd: T) -> Result<&Self> {
         let _ = self.inner.send_command(cmd).await;
         Ok(self)
@@ -465,7 +465,8 @@ impl Page {
 
     /// Controls whether page will emit lifecycle events
     pub async fn set_page_lifecycles_enabled(&self, enabled: bool) -> Result<&Self> {
-        self.execute(SetLifecycleEventsEnabledParams::new(enabled)).await?;
+        self.execute(SetLifecycleEventsEnabledParams::new(enabled))
+            .await?;
         Ok(self)
     }
 
@@ -524,8 +525,13 @@ impl Page {
 
         // todo: pull in the headers from auth.
         if let Some(source) = get_cached_url(&navigate_params.url, auth_opt).await {
-            let html = rewrite_base_tag(&source, &Some(&navigate_params.url)).await;
-            if let Ok(frame_id) = self.mainframe().await {
+            let (html, main_frame, _) = tokio::join!(
+                rewrite_base_tag(&source, Some(&navigate_params.url)),
+                self.mainframe(),
+                self.set_page_lifecycles_enabled(true)
+            );
+
+            if let Ok(frame_id) = main_frame {
                 if let Err(e) = self
                     .execute(browser_protocol::page::SetDocumentContentParams {
                         frame_id: frame_id.unwrap_or_default(),
@@ -572,8 +578,12 @@ impl Page {
 
         // todo: pull in the headers from auth.
         if let Some(source) = get_cached_url(&navigate_params.url, auth_opt).await {
-            let html = rewrite_base_tag(&source, &Some(&navigate_params.url)).await;
-            if let Ok(frame_id) = self.mainframe().await {
+            let (html, main_frame, _) = tokio::join!(
+                rewrite_base_tag(&source, Some(&navigate_params.url)),
+                self.mainframe(),
+                self.set_page_lifecycles_enabled(true)
+            );
+            if let Ok(frame_id) = main_frame {
                 let base = self.http_future(browser_protocol::page::SetDocumentContentParams {
                     frame_id: frame_id.unwrap_or_default(),
                     html,

@@ -40,7 +40,7 @@ lazy_static::lazy_static! {
 }
 
 /// Rewrite the initial base-tag.
-pub async fn rewrite_base_tag(html: &[u8], base_url: &Option<&str>) -> String {
+pub async fn rewrite_base_tag(html: &[u8], base_url: Option<&str>) -> String {
     use lol_html::{element, html_content::ContentType};
     use std::sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
@@ -59,7 +59,7 @@ pub async fn rewrite_base_tag(html: &[u8], base_url: &Option<&str>) -> String {
         return String::new();
     }
 
-    let base_href = match *base_url {
+    let base_href = match base_url {
         Some(s) if !s.is_empty() => s,
         _ => return bytes_to_string(html),
     };
