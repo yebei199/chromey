@@ -463,6 +463,12 @@ impl Page {
         Ok(self)
     }
 
+    /// Controls whether page will emit lifecycle events
+    pub async fn set_page_lifecycles_enabled(&self, enabled: bool) -> Result<&Self> {
+        self.execute(SetLifecycleEventsEnabledParams::new(enabled)).await?;
+        Ok(self)
+    }
+
     /// Wait until the network is idle.
     /// Usage:
     ///   page.goto("https://example.com").await?;
