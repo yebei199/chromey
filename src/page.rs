@@ -2849,6 +2849,35 @@ impl Page {
         self.wait_for_navigation().await
     }
 
+    /// Set the document content with lifecycles. Make sure to have a <base> element for proper host matching.
+    pub async fn set_html(
+        &self,
+        html: String,
+        // url_target: Option<&str>,
+    ) -> Result<&Self> {
+        let (main_frame, _) = tokio::join!(
+            // rewrite_base_tag(&html, &url_target),
+            self.mainframe(),
+            self.set_page_lifecycles_enabled(true)
+        );
+
+        if let Ok(frame_opt) = main_frame {
+            if let Err(e) = self
+                .execute(
+                    crate::page::browser_protocol::page::SetDocumentContentParams {
+                        frame_id: frame_opt.unwrap_or_default(),
+                        html,
+                    },
+                )
+                .await
+            {
+                tracing::info!("Set Content Error({:?})", e,);
+            }
+        }
+
+        Ok(self)
+    }
+
     /// Returns the HTML content of the page.
     pub async fn content(&self) -> Result<String> {
         Ok(self.evaluate(OUTER_HTML).await?.into_value()?)
@@ -2871,7 +2900,7 @@ impl Page {
 
     /// Enable Chrome's experimental ad filter on all sites.
     pub async fn set_ad_blocking_enabled(&self, enabled: bool) -> Result<&Self> {
-        self.execute(SetAdBlockingEnabledParams::new(enabled))
+        self.send_command(SetAdBlockingEnabledParams::new(enabled))
             .await?;
         Ok(self)
     }

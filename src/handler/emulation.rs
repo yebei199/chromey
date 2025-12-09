@@ -9,6 +9,7 @@ use crate::handler::viewport::Viewport;
 use std::time::Duration;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
+/// Emulation manager.
 pub struct EmulationManager {
     /// Whether mobile emulation is enabled.
     pub emulating_mobile: bool,

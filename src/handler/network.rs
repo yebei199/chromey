@@ -239,6 +239,7 @@ pub struct NetworkManager {
 }
 
 impl NetworkManager {
+    /// A new network manager.
     pub fn new(ignore_httpserrors: bool, request_timeout: Duration) -> Self {
         Self {
             queued_events: Default::default(),
@@ -272,6 +273,7 @@ impl NetworkManager {
         }
     }
 
+    /// Commands to init the chain with.
     pub fn init_commands(&self) -> CommandChain {
         let cmds = if self.ignore_httpserrors {
             INIT_CHAIN_IGNORE_HTTP_ERRORS.clone()
@@ -281,6 +283,7 @@ impl NetworkManager {
         CommandChain::new(cmds, self.request_timeout)
     }
 
+    /// Push the CDP request.
     pub(crate) fn push_cdp_request<T: Command>(&mut self, cmd: T) {
         let method = cmd.identifier();
         if let Ok(params) = serde_json::to_value(cmd) {
@@ -289,21 +292,25 @@ impl NetworkManager {
         }
     }
 
-    /// The next event to handle
+    /// The next event to handle.
     pub fn poll(&mut self) -> Option<NetworkEvent> {
         self.queued_events.pop_front()
     }
 
+    /// Get the extra headers.
     pub fn extra_headers(&self) -> &std::collections::HashMap<String, String> {
         &self.extra_headers
     }
 
+    /// Set extra HTTP headers.
     pub fn set_extra_headers(&mut self, headers: std::collections::HashMap<String, String>) {
         self.extra_headers = headers;
         self.extra_headers.remove(PROXY_AUTHORIZATION.as_str());
         self.extra_headers.remove("Proxy-Authorization");
-        if let Ok(headers) = serde_json::to_value(&self.extra_headers) {
-            self.push_cdp_request(SetExtraHttpHeadersParams::new(Headers::new(headers)));
+        if !self.extra_headers.is_empty() {
+            if let Ok(headers) = serde_json::to_value(&self.extra_headers) {
+                self.push_cdp_request(SetExtraHttpHeadersParams::new(Headers::new(headers)));
+            }
         }
     }
 
@@ -328,11 +335,12 @@ impl NetworkManager {
         }
     }
 
-    /// Enable the fetch interception.
+    /// Enable fetch interception.
     pub fn enable_request_intercept(&mut self) {
         self.protocol_request_interception_enabled = true;
     }
 
+    /// Disable fetch interception.
     pub fn disable_request_intercept(&mut self) {
         self.protocol_request_interception_enabled = false;
     }
@@ -374,14 +382,22 @@ impl NetworkManager {
     }
 
     /// Url matches analytics that we want to ignore or trackers.
+    #[inline]
     pub(crate) fn ignore_script(
         &self,
         url: &str,
         block_analytics: bool,
         intercept_manager: NetworkInterceptManager,
     ) -> bool {
-        let mut ignore_script = block_analytics
-            && spider_network_blocker::scripts::URL_IGNORE_TRIE.contains_prefix(url);
+        // allow relative domains.
+        let mut ignore_script = !url.starts_with("/");
+
+        if !ignore_script
+            && block_analytics
+            && spider_network_blocker::scripts::URL_IGNORE_TRIE.contains_prefix(url)
+        {
+            ignore_script = true;
+        }
 
         if !ignore_script {
             if let Some(index) = url.find("//") {
@@ -436,6 +452,7 @@ impl NetworkManager {
     }
 
     /// Determine if the request should be skipped.
+    #[inline]
     fn skip_xhr(
         &self,
         skip_networking: bool,
@@ -785,13 +802,16 @@ impl NetworkManager {
                 let (http_document_replacement, mut https_document_replacement) =
                     if self.document_target_domain.starts_with("http://") {
                         (
-                            self.document_target_domain.replace("http://", "http//"),
-                            self.document_target_domain.replace("http://", "https://"),
+                            self.document_target_domain.replacen("http://", "http//", 1),
+                            self.document_target_domain
+                                .replacen("http://", "https://", 1),
                         )
                     } else {
                         (
-                            self.document_target_domain.replace("https://", "https//"),
-                            self.document_target_domain.replace("https://", "http://"),
+                            self.document_target_domain
+                                .replacen("https://", "https//", 1),
+                            self.document_target_domain
+                                .replacen("https://", "http://", 1),
                         )
                     };
 
@@ -921,6 +941,7 @@ impl NetworkManager {
         self.push_cdp_request(ContinueWithAuthParams::new(event.request_id.clone(), auth));
     }
 
+    /// Set the page offline network emulation condition.
     pub fn set_offline_mode(&mut self, value: bool) {
         if self.offline == value {
             return;
@@ -1021,6 +1042,7 @@ impl NetworkManager {
         }
     }
 
+    /// On network loading finished.
     pub fn on_network_loading_finished(&mut self, event: &EventLoadingFinished) {
         if let Some(request) = self.requests.remove(event.request_id.as_ref()) {
             if let Some(interception_id) = request.interception_id.as_ref() {
@@ -1032,6 +1054,7 @@ impl NetworkManager {
         }
     }
 
+    /// On network loading failed.
     pub fn on_network_loading_failed(&mut self, event: &EventLoadingFailed) {
         if let Some(mut request) = self.requests.remove(event.request_id.as_ref()) {
             request.failure_text = Some(event.error_text.clone());
@@ -1044,6 +1067,7 @@ impl NetworkManager {
         }
     }
 
+    /// On request will be sent.
     fn on_request(
         &mut self,
         event: &EventRequestWillBeSent,
@@ -1059,10 +1083,12 @@ impl NetworkManager {
                         if redirect_resp.url != location {
                             let fixed_location = location.replace(&redirect_resp.url, "");
 
-                            request.response.as_mut().map(|resp| {
-                                resp.headers.0["Location"] =
-                                    serde_json::Value::String(fixed_location.clone());
-                            });
+                            if !fixed_location.is_empty() {
+                                request.response.as_mut().map(|resp| {
+                                    resp.headers.0["Location"] =
+                                        serde_json::Value::String(fixed_location.clone());
+                                });
+                            }
 
                             redirect_location = Some(fixed_location);
                         }
@@ -1074,8 +1100,10 @@ impl NetworkManager {
                     if let Some(redirect_location) = redirect_location {
                         let mut redirect_resp = redirect_resp.clone();
 
-                        redirect_resp.headers.0["Location"] =
-                            serde_json::Value::String(redirect_location);
+                        if !redirect_location.is_empty() {
+                            redirect_resp.headers.0["Location"] =
+                                serde_json::Value::String(redirect_location);
+                        }
 
                         redirect_resp
                     } else {
@@ -1101,6 +1129,7 @@ impl NetworkManager {
             .push_back(NetworkEvent::Request(event.request_id.clone()));
     }
 
+    /// Handle request redirect.
     fn handle_request_redirect(&mut self, request: &mut HttpRequest, response: Response) {
         request.set_response(response);
         if let Some(interception_id) = request.interception_id.as_ref() {
@@ -1112,10 +1141,16 @@ impl NetworkManager {
 
 #[derive(Debug)]
 pub enum NetworkEvent {
+    /// Send a CDP request.
     SendCdpRequest((MethodId, serde_json::Value)),
+    /// Request.
     Request(RequestId),
+    /// Response
     Response(RequestId),
+    /// Request failed.
     RequestFailed(HttpRequest),
+    /// Request finished.
     RequestFinished(HttpRequest),
+    /// Bytes consumed.
     BytesConsumed(u64),
 }
