@@ -268,6 +268,20 @@ impl Page {
         Ok(self)
     }
 
+    /// Reset the navigation history.
+    pub async fn reset_navigation_history(&self) -> Result<&Self> {
+        self.send_command(ResetNavigationHistoryParams::default())
+            .await?;
+        Ok(self)
+    }
+
+    /// Reset the navigation history execute.
+    pub async fn reset_navigation_history_execute(&self) -> Result<&Self> {
+        self.execute(ResetNavigationHistoryParams::default())
+            .await?;
+        Ok(self)
+    }
+
     /// Sets `window.chrome` on frame creation and console.log methods.
     pub async fn hide_chrome(&self) -> Result<&Self, CdpError> {
         self.execute(AddScriptToEvaluateOnNewDocumentParams {
