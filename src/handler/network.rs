@@ -82,13 +82,13 @@ lazy_static! {
         // Verified 3rd parties for request
         "https://m.stripe.network/",
         "https://challenges.cloudflare.com/",
-        "/cdn-cgi/challenge-platform/",
         "https://www.google.com/recaptcha/api.js",
         "https://google.com/recaptcha/api.js",
         "https://js.stripe.com/",
         "https://cdn.prod.website-files.com/", // webflow cdn scripts
         "https://cdnjs.cloudflare.com/",        // cloudflare cdn scripts
-        "https://code.jquery.com/jquery-"
+        "https://code.jquery.com/jquery-",
+        "/cdn-cgi/challenge-platform/",
     ];
 
     /// Determine if a script should be rendered in the browser by name.
@@ -710,7 +710,8 @@ impl NetworkManager {
             skip_networking = crate::handler::blockers::block_websites::block_website(current_url);
         }
 
-        if !skip_networking && ALLOWED_MATCHER_3RD_PARTY.is_match(current_url) {
+        // whitelist 3rd party
+        if skip_networking && javascript_resource && ALLOWED_MATCHER_3RD_PARTY.is_match(current_url) {
             skip_networking = false;
         }
 
@@ -1153,4 +1154,31 @@ pub enum NetworkEvent {
     RequestFinished(HttpRequest),
     /// Bytes consumed.
     BytesConsumed(u64),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ALLOWED_MATCHER_3RD_PARTY;
+
+    #[test]
+    fn test_allowed_matcher_3rd_party() {
+        // Should be allowed (matches "/cdn-cgi/challenge-platform/")
+        let cf_challenge = "https://www.something.com.ba/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1?ray=9abf7b523d90987e";
+        assert!(
+            ALLOWED_MATCHER_3RD_PARTY.is_match(cf_challenge),
+            "expected Cloudflare challenge script to be allowed"
+        );
+
+        // Should NOT be allowed (not in allow-list)
+        let cf_insights = "https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015";
+        assert!(
+            !ALLOWED_MATCHER_3RD_PARTY.is_match(cf_insights),
+            "expected Cloudflare Insights beacon to remain blocked (not in allow-list)"
+        );
+
+        // A couple sanity checks for existing allow patterns
+        assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://js.stripe.com/v3/"));
+        assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://www.google.com/recaptcha/api.js?render=explicit"));
+        assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://code.jquery.com/jquery-3.7.1.min.js"));
+    }
 }

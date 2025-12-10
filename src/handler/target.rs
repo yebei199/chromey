@@ -71,6 +71,7 @@ lazy_static::lazy_static! {
             .wait_for_debugger_on_start(true)
             .build() {
                 let disable_log = cdplog::DisableParams::default();
+
                 let mut cmds =  vec![
                     (
                         attach.identifier(),
