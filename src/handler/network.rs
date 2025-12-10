@@ -711,7 +711,8 @@ impl NetworkManager {
         }
 
         // whitelist 3rd party
-        if skip_networking && javascript_resource && ALLOWED_MATCHER_3RD_PARTY.is_match(current_url) {
+        if skip_networking && javascript_resource && ALLOWED_MATCHER_3RD_PARTY.is_match(current_url)
+        {
             skip_networking = false;
         }
 
@@ -1178,7 +1179,8 @@ mod tests {
 
         // A couple sanity checks for existing allow patterns
         assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://js.stripe.com/v3/"));
-        assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://www.google.com/recaptcha/api.js?render=explicit"));
+        assert!(ALLOWED_MATCHER_3RD_PARTY
+            .is_match("https://www.google.com/recaptcha/api.js?render=explicit"));
         assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://code.jquery.com/jquery-3.7.1.min.js"));
     }
 }

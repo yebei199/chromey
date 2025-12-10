@@ -2174,6 +2174,22 @@ impl Page {
         Ok(self)
     }
 
+    /// Enables Fetch.
+    pub async fn enable_fetch(
+        &self,
+        cmd: impl Into<browser_protocol::fetch::EnableParams>,
+    ) -> Result<&Self> {
+        self.send_command(cmd.into()).await?;
+        Ok(self)
+    }
+
+    /// Disables Fetch.
+    pub async fn disable_fetch(&self) -> Result<&Self> {
+        self.send_command(browser_protocol::fetch::DisableParams::default())
+            .await?;
+        Ok(self)
+    }
+
     /// Disables ServiceWorker. Disabled by default.
     /// See https://chromedevtools.github.io/devtools-protocol/tot/ServiceWorker#method-enable
     pub async fn disable_service_workers(&self) -> Result<&Self> {
@@ -2340,6 +2356,15 @@ impl Page {
     pub async fn disable_css(&self) -> Result<&Self> {
         self.send_command(browser_protocol::css::DisableParams::default())
             .await?;
+        Ok(self)
+    }
+
+    // Disables the cache.
+    pub async fn disable_network_cache(&self, disabled: bool) -> Result<&Self> {
+        self.send_command(browser_protocol::network::SetCacheDisabledParams::new(
+            disabled,
+        ))
+        .await?;
         Ok(self)
     }
 
