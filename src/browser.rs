@@ -26,6 +26,9 @@ use crate::utils;
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{
     BrowserContextId, CloseReturns, GetVersionParams, GetVersionReturns,
 };
+use chromiumoxide_cdp::cdp::browser_protocol::browser::{
+    PermissionDescriptor, PermissionSetting, SetPermissionParams,
+};
 use chromiumoxide_cdp::cdp::browser_protocol::network::{Cookie, CookieParam};
 use chromiumoxide_cdp::cdp::browser_protocol::storage::{
     ClearCookiesParams, GetCookiesParams, SetCookiesParams,
@@ -34,6 +37,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams,
     GetBrowserContextsParams, GetBrowserContextsReturns, TargetId, TargetInfo,
 };
+
 use chromiumoxide_cdp::cdp::{CdpEventMessage, IntoEventKind};
 use chromiumoxide_types::*;
 use spider_network_blocker::intercept_manager::NetworkInterceptManager;
@@ -493,6 +497,88 @@ impl Browser {
             .await?;
         let resp = rx.await??;
         to_command_response::<T>(resp, method)
+    }
+
+    /// Set permission settings for given embedding and embedded origins.
+    /// [PermissionDescriptor](https://chromedevtools.github.io/devtools-protocol/tot/Browser/#type-PermissionDescriptor)
+    /// [PermissionSetting](https://chromedevtools.github.io/devtools-protocol/tot/Browser/#type-PermissionSetting)
+    pub async fn set_permission(
+        &self,
+        permission: PermissionDescriptor,
+        setting: PermissionSetting,
+        origin: Option<impl Into<String>>,
+        embedded_origin: Option<impl Into<String>>,
+        browser_context_id: Option<BrowserContextId>,
+    ) -> Result<&Self> {
+        self.execute(SetPermissionParams {
+            permission,
+            setting,
+            origin: origin.map(Into::into),
+            embedded_origin: embedded_origin.map(Into::into),
+            browser_context_id: browser_context_id.or_else(|| self.browser_context.id.clone()),
+        })
+        .await?;
+        Ok(self)
+    }
+
+    /// Convenience: set a permission for a single origin using the current browser context.
+    pub async fn set_permission_for_origin(
+        &self,
+        origin: impl Into<String>,
+        embedded_origin: Option<impl Into<String>>,
+        permission: PermissionDescriptor,
+        setting: PermissionSetting,
+    ) -> Result<&Self> {
+        self.set_permission(permission, setting, Some(origin), embedded_origin, None)
+            .await
+    }
+
+    /// "Reset" a permission override by setting it back to Prompt.
+    pub async fn reset_permission_for_origin(
+        &self,
+        origin: impl Into<String>,
+        embedded_origin: Option<impl Into<String>>,
+        permission: PermissionDescriptor,
+    ) -> Result<&Self> {
+        self.set_permission_for_origin(
+            origin,
+            embedded_origin,
+            permission,
+            PermissionSetting::Prompt,
+        )
+        .await
+    }
+
+    /// "Grant" all permissions.
+    pub async fn grant_all_permission_for_origin(
+        &self,
+        origin: impl Into<String>,
+        embedded_origin: Option<impl Into<String>>,
+        permission: PermissionDescriptor,
+    ) -> Result<&Self> {
+        self.set_permission_for_origin(
+            origin,
+            embedded_origin,
+            permission,
+            PermissionSetting::Granted,
+        )
+        .await
+    }
+
+    /// "Deny" all permissions.
+    pub async fn deny_all_permission_for_origin(
+        &self,
+        origin: impl Into<String>,
+        embedded_origin: Option<impl Into<String>>,
+        permission: PermissionDescriptor,
+    ) -> Result<&Self> {
+        self.set_permission_for_origin(
+            origin,
+            embedded_origin,
+            permission,
+            PermissionSetting::Denied,
+        )
+        .await
     }
 
     /// Return all of the pages of the browser

@@ -83,6 +83,42 @@ pub fn platform_from_user_agent(user_agent: &str) -> &'static str {
     }
 }
 
+/// Collect scope nodeIds you may want to run DOM.querySelector(All) agains.
+fn collect_scopes_iterative(root: &Node) -> Vec<NodeId> {
+    use hashbrown::HashSet;
+
+    let mut scopes = Vec::new();
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    let mut stack: Vec<&Node> = Vec::new();
+
+    stack.push(root);
+
+    while let Some(n) = stack.pop() {
+        if seen.insert(n.node_id) {
+            scopes.push(n.node_id);
+        }
+
+        if let Some(shadow_roots) = n.shadow_roots.as_ref() {
+            // push in reverse to preserve roughly DOM order (optional)
+            for sr in shadow_roots.iter().rev() {
+                stack.push(sr);
+            }
+        }
+
+        if let Some(cd) = n.content_document.as_ref() {
+            stack.push(cd);
+        }
+
+        if let Some(children) = n.children.as_ref() {
+            for c in children.iter().rev() {
+                stack.push(c);
+            }
+        }
+    }
+
+    scopes
+}
+
 #[derive(Debug, Clone)]
 pub struct Page {
     inner: Arc<PageInner>,
@@ -1256,6 +1292,74 @@ impl Page {
             .execute(DescribeNodeParams::builder().node_id(node_id).build())
             .await?;
         Ok(resp.result.node)
+    }
+
+    /// Find an element inside the shadow root.
+    pub async fn find_in_shadow_root(
+        &self,
+        host_selector: &str,
+        inner_selector: &str,
+    ) -> Result<Element> {
+        let doc = self.get_document().await?;
+        let host = self
+            .inner
+            .find_element(host_selector.to_string(), doc.node_id)
+            .await?;
+
+        let described = self
+            .execute(
+                DescribeNodeParams::builder()
+                    .node_id(host)
+                    .depth(0)
+                    .pierce(true)
+                    .build(),
+            )
+            .await?
+            .result
+            .node;
+
+        let shadow_root = described
+            .shadow_roots
+            .as_ref()
+            .and_then(|v| v.first())
+            .ok_or_else(|| CdpError::msg("host has no shadow root"))?;
+
+        let inner = self
+            .inner
+            .find_element(inner_selector.to_string(), shadow_root.node_id)
+            .await?;
+
+        Element::new(Arc::clone(&self.inner), inner).await
+    }
+
+    /// Find elements pierced nodes.
+    pub async fn find_elements_pierced(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
+        let selector = selector.into();
+
+        let root = self.get_document().await?;
+        let scopes = collect_scopes_iterative(&root);
+
+        let mut all = Vec::new();
+        let mut node_seen = hashbrown::HashSet::new();
+
+        for scope in scopes {
+            if let Ok(ids) = self.inner.find_elements(selector.clone(), scope).await {
+                for id in ids {
+                    if node_seen.insert(id) {
+                        all.push(id);
+                    }
+                }
+            }
+        }
+
+        Element::from_nodes(&self.inner, &all).await
+    }
+
+    /// Find an element through pierced nodes.
+    pub async fn find_element_pierced(&self, selector: impl Into<String>) -> Result<Element> {
+        let selector = selector.into();
+        let mut els = self.find_elements_pierced(selector).await?;
+        els.pop().ok_or_else(|| CdpError::msg("not found"))
     }
 
     /// Tries to close page, running its beforeunload hooks, if any.
