@@ -112,6 +112,7 @@ lazy_static! {
         "image/jpeg",
         "image/gif",
         "image/bmp",
+        "image/webp",
         "image/svg+xml",
         "video/mp4",
         "video/x-msvideo",
@@ -688,9 +689,12 @@ impl NetworkManager {
         }
 
         // Analytics check for JS.
-        if !skip_networking && javascript_resource {
-            skip_networking =
-                self.ignore_script(current_url, self.block_analytics, self.intercept_manager);
+        if skip_networking && javascript_resource {
+            skip_networking = self.ignore_script(
+                current_url.trim_start_matches(&self.document_target_domain),
+                self.block_analytics,
+                self.intercept_manager,
+            );
         }
 
         // XHR / data resources.
