@@ -1,6 +1,6 @@
 [package]
 name = "chromey"
-version = "2.37.211"
+version = "2.37.213"
 rust-version = "1.70"
 authors = ["j-mendez <jeff@spider.cloud>"]
 edition = "2021"

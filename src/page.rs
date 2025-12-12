@@ -16,6 +16,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::network::{
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
 use chromiumoxide_cdp::cdp::browser_protocol::performance::{GetMetricsParams, Metric};
+use chromiumoxide_cdp::cdp::browser_protocol::storage::ClearCookiesParams;
 use chromiumoxide_cdp::cdp::browser_protocol::target::{SessionId, TargetId};
 use chromiumoxide_cdp::cdp::browser_protocol::{dom::*, emulation};
 use chromiumoxide_cdp::cdp::js_protocol;
@@ -2421,6 +2422,13 @@ impl Page {
             .await?
             .result
             .cookies)
+    }
+
+    /// Clear the cookies from the network.
+    pub async fn clear_cookies(&self) -> Result<&Self> {
+        self.execute(ClearCookiesParams::default()).await?;
+
+        Ok(self)
     }
 
     /// Set a single cookie

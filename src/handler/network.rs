@@ -88,6 +88,8 @@ lazy_static! {
         "https://cdn.prod.website-files.com/", // webflow cdn scripts
         "https://cdnjs.cloudflare.com/",        // cloudflare cdn scripts
         "https://code.jquery.com/jquery-",
+        "https://ct.captcha-delivery.com/",
+        "https://geo.captcha-delivery.com/captcha/",
         "/cdn-cgi/challenge-platform/",
     ];
 
