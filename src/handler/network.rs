@@ -90,6 +90,7 @@ lazy_static! {
         "https://code.jquery.com/jquery-",
         "https://ct.captcha-delivery.com/",
         "https://geo.captcha-delivery.com/captcha/",
+        "https://img1.wsimg.com/parking-lander/static/js/main.d9ebbb8c.js", // parking landing page iframe
         "/cdn-cgi/challenge-platform/",
     ];
 

@@ -1099,7 +1099,6 @@ impl Page {
             &default_params.user_agent,
         ));
         let windows = ua_data.platform == "Windows";
-
         let brands = ua_data
             .full_version_list
             .iter()
@@ -1124,6 +1123,12 @@ impl Page {
             .full_version_lists(full_versions)
             .platform(ua_data.platform)
             .mobile(ua_data.mobile);
+
+        let user_agent_metadata_builder = if !ua_data.ua_full_version.is_empty() {
+            user_agent_metadata_builder.full_version(ua_data.ua_full_version)
+        } else {
+            user_agent_metadata_builder
+        };
 
         let user_agent_metadata_builder = if windows {
             user_agent_metadata_builder.wow64(ua_data.wow64_ness)
