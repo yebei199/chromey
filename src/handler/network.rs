@@ -68,6 +68,7 @@ lazy_static! {
         "https://challenges.cloudflare.com/",
         "https://www.google.com/recaptcha/api.js",
         "https://google.com/recaptcha/api.js",
+        "https://captcha.px-cloud.net/",
         "https://js.stripe.com/",
         "https://cdn.prod.website-files.com/", // webflow cdn scripts
         "https://cdnjs.cloudflare.com/",        // cloudflare cdn scripts
@@ -91,7 +92,9 @@ lazy_static! {
         "https://ct.captcha-delivery.com/",
         "https://geo.captcha-delivery.com/captcha/",
         "https://img1.wsimg.com/parking-lander/static/js/main.d9ebbb8c.js", // parking landing page iframe
-        "/cdn-cgi/challenge-platform/",
+        "https://ct.captcha-delivery.com/",
+        "https://captcha.px-cloud.net/",
+        "/cdn-cgi/challenge-platform/"
     ];
 
     /// Determine if a script should be rendered in the browser by name.
@@ -193,6 +196,25 @@ pub(crate) fn is_redirect_status(status: i64) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
 }
 
+#[inline]
+/// Origin from URL.
+fn origin_from_url(url: &str) -> Option<&str> {
+    let url = url.strip_prefix("blob:").unwrap_or(url);
+    let url = url.strip_prefix("filesystem:").unwrap_or(url);
+
+    if url.starts_with('/') {
+        return None;
+    }
+
+    let scheme_pos = url.find("://")?;
+    let host_start = scheme_pos + 3;
+
+    match url[host_start..].find('/') {
+        Some(rel_slash) => Some(&url[..host_start + rel_slash]),
+        None => Some(url),
+    }
+}
+
 #[derive(Debug)]
 /// The base network manager.
 pub struct NetworkManager {
@@ -230,6 +252,8 @@ pub struct NetworkManager {
     pub intercept_manager: NetworkInterceptManager,
     /// Track the amount of times the document reloaded.
     pub document_reload_tracker: u8,
+    /// The initial target url. We want to use a new page on every navigation to prevent re-using the old domain.
+    pub document_target_url: String,
     /// The initial target domain. We want to use a new page on every navigation to prevent re-using the old domain.
     pub document_target_domain: String,
     /// The max bytes to receive.
@@ -268,6 +292,7 @@ impl NetworkManager {
             xml_document: false,
             intercept_manager: NetworkInterceptManager::Unknown,
             document_reload_tracker: 0,
+            document_target_url: String::new(),
             document_target_domain: String::new(),
             max_bytes_allowed: None,
             #[cfg(feature = "_cache")]
@@ -693,11 +718,14 @@ impl NetworkManager {
 
         // Analytics check for JS.
         if skip_networking && javascript_resource {
-            skip_networking = self.ignore_script(
-                current_url.trim_start_matches(&self.document_target_domain),
-                self.block_analytics,
-                self.intercept_manager,
-            );
+            let rel = if !self.document_target_domain.is_empty() {
+                current_url
+                    .strip_prefix(self.document_target_domain.as_str())
+                    .unwrap_or(current_url)
+            } else {
+                current_url
+            };
+            skip_networking = self.ignore_script(rel, self.block_analytics, self.intercept_manager);
         }
 
         // XHR / data resources.
@@ -770,25 +798,26 @@ impl NetworkManager {
 
     /// Does the network manager have a target domain?
     pub fn has_target_domain(&self) -> bool {
-        !self.document_target_domain.is_empty()
+        !self.document_target_url.is_empty()
     }
 
     /// Set the target page url for tracking.
     pub fn set_page_url(&mut self, page_target_url: String) {
-        self.document_target_domain = page_target_url;
+        self.document_target_domain = origin_from_url(&page_target_url).unwrap_or("").to_string();
+        self.document_target_url = page_target_url;
     }
 
     /// Clear the initial target domain on every navigation.
     pub fn clear_target_domain(&mut self) {
         self.document_reload_tracker = 0;
+        self.document_target_url = Default::default();
         self.document_target_domain = Default::default();
     }
-
     /// Handles:
     /// - document reload tracking (`document_reload_tracker`)
     /// - redirect masking / replacement
     /// - xml document detection (`xml_document`)
-    /// - `document_target_domain` updates
+    /// - `document_target_url` updates
     ///
     /// Returns (current_url, had_replacer).
     #[inline]
@@ -801,26 +830,20 @@ impl NetworkManager {
         let current_url = event.request.url.as_str();
 
         if document_resource {
-            if self.document_target_domain == current_url {
-                // Prevent redirect loop (3 attempts are considered enough).
+            if self.document_target_url == current_url {
                 self.document_reload_tracker += 1;
-            } else if !self.document_target_domain.is_empty()
-                && event.redirected_request_id.is_some()
+            } else if !self.document_target_url.is_empty() && event.redirected_request_id.is_some()
             {
-                // Build http/https mask pair for redirect masking.
                 let (http_document_replacement, mut https_document_replacement) =
-                    if self.document_target_domain.starts_with("http://") {
+                    if self.document_target_url.starts_with("http://") {
                         (
-                            self.document_target_domain.replacen("http://", "http//", 1),
-                            self.document_target_domain
-                                .replacen("http://", "https://", 1),
+                            self.document_target_url.replacen("http://", "http//", 1),
+                            self.document_target_url.replacen("http://", "https://", 1),
                         )
                     } else {
                         (
-                            self.document_target_domain
-                                .replacen("https://", "https//", 1),
-                            self.document_target_domain
-                                .replacen("https://", "http://", 1),
+                            self.document_target_url.replacen("https://", "https//", 1),
+                            self.document_target_url.replacen("https://", "http://", 1),
                         )
                     };
 
@@ -847,12 +870,15 @@ impl NetworkManager {
                 }
             }
 
-            if self.document_target_domain.is_empty() && current_url.ends_with(".xml") {
+            if self.document_target_url.is_empty() && current_url.ends_with(".xml") {
                 self.xml_document = true;
             }
 
             // Track last seen document URL.
-            self.document_target_domain = event.request.url.clone();
+            self.document_target_url = event.request.url.clone();
+            self.document_target_domain = origin_from_url(&self.document_target_url)
+                .unwrap_or("")
+                .to_string();
         }
 
         let current_url_cow = match replacer {
