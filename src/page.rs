@@ -9,7 +9,9 @@ use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
     SetGeolocationOverrideParams, SetHardwareConcurrencyOverrideParams, SetLocaleOverrideParams,
     SetTimezoneOverrideParams, UserAgentBrandVersion, UserAgentMetadata,
 };
-use chromiumoxide_cdp::cdp::browser_protocol::input::{DispatchDragEventType, DragData};
+use chromiumoxide_cdp::cdp::browser_protocol::input::{
+    DispatchDragEventType, DispatchMouseEventParams, DispatchMouseEventType, DragData, MouseButton,
+};
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
     Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, SetBlockedUrLsParams,
     SetCookiesParams, SetExtraHttpHeadersParams, SetUserAgentOverrideParams, TimeSinceEpoch,
@@ -1438,6 +1440,83 @@ impl Page {
     /// ```
     pub async fn click(&self, point: Point) -> Result<&Self> {
         self.inner.click(point).await?;
+        Ok(self)
+    }
+
+    /// Mouse down event.
+    pub async fn mouse_down(
+        &self,
+        point: Point,
+        button: MouseButton,
+        modifiers: i64,
+        click_count: i64,
+    ) -> Result<&Self> {
+        use crate::page::browser_protocol::input::DispatchMouseEventParams;
+        self.move_mouse(point).await?;
+        if let Ok(cmd) = DispatchMouseEventParams::builder()
+            .r#type(DispatchMouseEventType::MousePressed)
+            .x(point.x)
+            .y(point.y)
+            .button(button)
+            .modifiers(modifiers)
+            .click_count(click_count)
+            .build()
+        {
+            self.execute(cmd).await?;
+        }
+
+        Ok(self)
+    }
+
+    /// Mouse up event.
+    pub async fn mouse_up(
+        &self,
+        point: Point,
+        button: MouseButton,
+        modifiers: i64,
+        click_count: i64,
+    ) -> Result<&Self> {
+        self.move_mouse(point).await?;
+
+        if let Ok(cmd) = DispatchMouseEventParams::builder()
+            .r#type(DispatchMouseEventType::MouseReleased)
+            .x(point.x)
+            .y(point.y)
+            .button(button)
+            .modifiers(modifiers)
+            .click_count(click_count)
+            .build()
+        {
+            self.execute(cmd).await?;
+        }
+
+        Ok(self)
+    }
+
+    /// Click and hold.
+    pub async fn click_and_hold(
+        &self,
+        point: Point,
+        hold_for: std::time::Duration,
+    ) -> Result<&Self> {
+        self.mouse_down(point, MouseButton::Left, 0, 1).await?;
+        tokio::time::sleep(hold_for).await;
+        self.mouse_up(point, MouseButton::Left, 0, 1).await?;
+        Ok(self)
+    }
+
+    /// Click and hold with modifiers.
+    pub async fn click_and_hold_with_modifier(
+        &self,
+        point: Point,
+        hold_for: std::time::Duration,
+        modifiers: i64,
+    ) -> Result<&Self> {
+        self.mouse_down(point, MouseButton::Left, modifiers, 1)
+            .await?;
+        tokio::time::sleep(hold_for).await;
+        self.mouse_up(point, MouseButton::Left, modifiers, 1)
+            .await?;
         Ok(self)
     }
 
