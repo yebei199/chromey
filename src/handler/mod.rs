@@ -11,7 +11,6 @@ use futures::channel::oneshot::Sender as OneshotSender;
 use futures::stream::{Fuse, Stream, StreamExt};
 use futures::task::{Context, Poll};
 use hashbrown::{HashMap, HashSet};
-pub(crate) use page::PageInner;
 use spider_network_blocker::intercept_manager::NetworkInterceptManager;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -30,6 +29,7 @@ use crate::handler::target::TargetEvent;
 use crate::handler::target::{Target, TargetConfig};
 use crate::handler::viewport::Viewport;
 use crate::page::Page;
+pub(crate) use page::PageInner;
 
 /// Standard timeout in MS
 pub const REQUEST_TIMEOUT: u64 = 30_000;
@@ -44,6 +44,7 @@ pub mod http;
 pub mod httpfuture;
 mod job;
 pub mod network;
+pub mod network_utils;
 mod page;
 mod session;
 pub mod target;

@@ -7,6 +7,7 @@ use crate::auth::Credentials;
 use crate::cache::BasicCachePolicy;
 use crate::cmd::CommandChain;
 use crate::handler::http::HttpRequest;
+use crate::handler::network_utils::{base_domain_from_host, host_and_rest, host_is_subdomain_of};
 use aho_corasick::AhoCorasick;
 use case_insensitive_string::CaseInsensitiveString;
 use chromiumoxide_cdp::cdp::browser_protocol::fetch::{RequestPattern, RequestStage};
@@ -194,25 +195,6 @@ lazy_static! {
 /// Determine if a redirect is true.
 pub(crate) fn is_redirect_status(status: i64) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
-}
-
-#[inline]
-/// Origin from URL.
-fn origin_from_url(url: &str) -> Option<&str> {
-    let url = url.strip_prefix("blob:").unwrap_or(url);
-    let url = url.strip_prefix("filesystem:").unwrap_or(url);
-
-    if url.starts_with('/') {
-        return None;
-    }
-
-    let scheme_pos = url.find("://")?;
-    let host_start = scheme_pos + 3;
-
-    match url[host_start..].find('/') {
-        Some(rel_slash) => Some(&url[..host_start + rel_slash]),
-        None => Some(url),
-    }
 }
 
 #[derive(Debug)]
@@ -408,6 +390,31 @@ impl NetworkManager {
         } else {
             self.push_cdp_request(DisableParams::default())
         }
+    }
+
+    #[inline]
+    fn rel_for_ignore_script<'a>(&self, url: &'a str) -> Cow<'a, str> {
+        // Already relative (or root-relative)
+        if url.starts_with('/') {
+            return Cow::Borrowed(url);
+        }
+
+        let base = self.document_target_domain.as_str();
+        if base.is_empty() {
+            return Cow::Borrowed(url);
+        }
+
+        if let Some((host, rest)) = host_and_rest(url) {
+            if host_is_subdomain_of(host, base) {
+                if rest.starts_with('/') {
+                    return Cow::Borrowed(rest);
+                } else {
+                    return Cow::Borrowed("/");
+                }
+            }
+        }
+
+        Cow::Borrowed(url)
     }
 
     /// Url matches analytics that we want to ignore or trackers.
@@ -718,14 +725,9 @@ impl NetworkManager {
 
         // Analytics check for JS.
         if skip_networking && javascript_resource {
-            let rel = if !self.document_target_domain.is_empty() {
-                current_url
-                    .strip_prefix(self.document_target_domain.as_str())
-                    .unwrap_or(current_url)
-            } else {
-                current_url
-            };
-            skip_networking = self.ignore_script(rel, self.block_analytics, self.intercept_manager);
+            let rel = self.rel_for_ignore_script(current_url);
+            skip_networking =
+                self.ignore_script(rel.as_ref(), self.block_analytics, self.intercept_manager);
         }
 
         // XHR / data resources.
@@ -803,7 +805,11 @@ impl NetworkManager {
 
     /// Set the target page url for tracking.
     pub fn set_page_url(&mut self, page_target_url: String) {
-        self.document_target_domain = origin_from_url(&page_target_url).unwrap_or("").to_string();
+        let host_base = host_and_rest(&page_target_url)
+            .map(|(h, _)| base_domain_from_host(h))
+            .unwrap_or("");
+
+        self.document_target_domain = host_base.to_string();
         self.document_target_url = page_target_url;
     }
 
@@ -876,9 +882,9 @@ impl NetworkManager {
 
             // Track last seen document URL.
             self.document_target_url = event.request.url.clone();
-            self.document_target_domain = origin_from_url(&self.document_target_url)
-                .unwrap_or("")
-                .to_string();
+            self.document_target_domain = host_and_rest(&self.document_target_url)
+                .map(|(h, _)| base_domain_from_host(h).to_string())
+                .unwrap_or_default();
         }
 
         let current_url_cow = match replacer {
