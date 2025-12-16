@@ -67,9 +67,11 @@ lazy_static! {
         // Verified 3rd parties for request
         "https://m.stripe.network/",
         "https://challenges.cloudflare.com/",
+        "https://www.google.com/recaptcha/enterprise.js",
         "https://www.google.com/recaptcha/api.js",
         "https://google.com/recaptcha/api.js",
         "https://captcha.px-cloud.net/",
+        "https://cdn.auth0.com/js/lock/",
         "https://js.stripe.com/",
         "https://cdn.prod.website-files.com/", // webflow cdn scripts
         "https://cdnjs.cloudflare.com/",        // cloudflare cdn scripts
@@ -86,6 +88,7 @@ lazy_static! {
         "https://challenges.cloudflare.com/",
         "https://www.google.com/recaptcha/api.js",
         "https://google.com/recaptcha/api.js",
+        "https://www.google.com/recaptcha/enterprise.js",
         "https://js.stripe.com/",
         "https://cdn.prod.website-files.com/", // webflow cdn scripts
         "https://cdnjs.cloudflare.com/",        // cloudflare cdn scripts
