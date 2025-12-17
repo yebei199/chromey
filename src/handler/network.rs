@@ -254,6 +254,10 @@ pub struct NetworkManager {
     /// The cache policy to use.
     #[cfg(feature = "_cache")]
     pub cache_policy: Option<BasicCachePolicy>,
+    /// Optional per-run/per-site whitelist of URL substrings (scripts/resources).
+    whitelist_patterns: Vec<String>,
+    /// Compiled matcher for whitelist_patterns (rebuilt when patterns change).
+    whitelist_matcher: Option<AhoCorasick>,
 }
 
 impl NetworkManager {
@@ -284,12 +288,62 @@ impl NetworkManager {
             document_reload_tracker: 0,
             document_target_url: String::new(),
             document_target_domain: String::new(),
+            whitelist_patterns: Vec::new(),
+            whitelist_matcher: None,
             max_bytes_allowed: None,
             #[cfg(feature = "_cache")]
             cache_site_key: None,
             #[cfg(feature = "_cache")]
             cache_policy: None,
         }
+    }
+
+    /// Replace the whitelist patterns (compiled once).
+    pub fn set_whitelist_patterns<I, S>(&mut self, patterns: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.whitelist_patterns = patterns.into_iter().map(Into::into).collect();
+        self.rebuild_whitelist_matcher();
+    }
+
+    /// Add one pattern (cheap) and rebuild (call this sparingly).
+    pub fn add_whitelist_pattern<S: Into<String>>(&mut self, pattern: S) {
+        self.whitelist_patterns.push(pattern.into());
+        self.rebuild_whitelist_matcher();
+    }
+
+    /// Add many patterns and rebuild once.
+    pub fn add_whitelist_patterns<I, S>(&mut self, patterns: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.whitelist_patterns
+            .extend(patterns.into_iter().map(Into::into));
+        self.rebuild_whitelist_matcher();
+    }
+
+    #[inline]
+    fn rebuild_whitelist_matcher(&mut self) {
+        if self.whitelist_patterns.is_empty() {
+            self.whitelist_matcher = None;
+            return;
+        }
+
+        let refs: Vec<&str> = self.whitelist_patterns.iter().map(|s| s.as_str()).collect();
+
+        // If building fails (shouldn’t for simple patterns), just disable matcher.
+        self.whitelist_matcher = AhoCorasick::new(refs).ok();
+    }
+
+    #[inline]
+    fn is_whitelisted(&self, url: &str) -> bool {
+        self.whitelist_matcher
+            .as_ref()
+            .map(|m| m.is_match(url))
+            .unwrap_or(false)
     }
 
     /// Commands to init the chain with.
@@ -765,6 +819,11 @@ impl NetworkManager {
         // whitelist 3rd party
         if skip_networking && javascript_resource && ALLOWED_MATCHER_3RD_PARTY.is_match(current_url)
         {
+            skip_networking = false;
+        }
+
+        // check if the url is in the whitelist.
+        if skip_networking && self.is_whitelisted(current_url) {
             skip_networking = false;
         }
 

@@ -172,6 +172,7 @@ impl Browser {
             service_worker_enabled: config.service_worker_enabled,
             intercept_manager: config.intercept_manager,
             max_bytes_allowed: config.max_bytes_allowed,
+            whitelist_patterns: config.whitelist_patterns.clone(),
             ..Default::default()
         };
 
@@ -259,6 +260,7 @@ impl Browser {
             created_first_target: false,
             intercept_manager: config.intercept_manager,
             max_bytes_allowed: config.max_bytes_allowed,
+            whitelist_patterns: config.whitelist_patterns.clone(),
         };
 
         let fut = Handler::new(conn, rx, handler_config);
@@ -857,6 +859,8 @@ pub struct BrowserConfig {
     pub intercept_manager: NetworkInterceptManager,
     /// The max bytes to receive.
     pub max_bytes_allowed: Option<u64>,
+    /// Whitelist patterns to allow through the network.
+    pub whitelist_patterns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -918,6 +922,8 @@ pub struct BrowserConfigBuilder {
     intercept_manager: NetworkInterceptManager,
     /// Optional upper bound on bytes that may be received (per session/run).
     max_bytes_allowed: Option<u64>,
+    /// Whitelist patterns to allow through the network.
+    whitelist_patterns: Option<Vec<String>>,
 }
 
 impl BrowserConfig {
@@ -966,6 +972,7 @@ impl Default for BrowserConfigBuilder {
             service_worker_enabled: true,
             intercept_manager: NetworkInterceptManager::Unknown,
             max_bytes_allowed: None,
+            whitelist_patterns: None,
         }
     }
 }
@@ -1128,11 +1135,13 @@ impl BrowserConfigBuilder {
         self
     }
 
+    /// Set service worker enabled.
     pub fn set_service_worker_enabled(mut self, bypass: bool) -> Self {
         self.service_worker_enabled = bypass;
         self
     }
 
+    /// Set extra request headers.
     pub fn set_extra_headers(
         mut self,
         headers: Option<std::collections::HashMap<String, String>>,
@@ -1141,6 +1150,13 @@ impl BrowserConfigBuilder {
         self
     }
 
+    /// Set whitelist patterns to allow through network interception ignoring.
+    pub fn set_whitelist_patterns(mut self, whitelist_patterns: Option<Vec<String>>) -> Self {
+        self.whitelist_patterns = whitelist_patterns;
+        self
+    }
+
+    /// Build the browser.
     pub fn build(self) -> std::result::Result<BrowserConfig, String> {
         let executable = if let Some(e) = self.executable {
             e
@@ -1176,6 +1192,7 @@ impl BrowserConfigBuilder {
             intercept_manager: self.intercept_manager,
             service_worker_enabled: self.service_worker_enabled,
             max_bytes_allowed: self.max_bytes_allowed,
+            whitelist_patterns: self.whitelist_patterns,
         })
     }
 }

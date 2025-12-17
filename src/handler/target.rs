@@ -161,8 +161,12 @@ impl Target {
         network_manager.set_request_interception(config.request_intercept);
         network_manager.max_bytes_allowed = config.max_bytes_allowed;
 
-        if let Some(ref headers) = config.extra_headers {
+        if let Some(headers) = &config.extra_headers {
             network_manager.set_extra_headers(headers.clone());
+        }
+
+        if let Some(white_list) = &config.whitelist_patterns {
+            network_manager.set_whitelist_patterns(white_list.clone());
         }
 
         network_manager.ignore_visuals = config.ignore_visuals;
@@ -854,6 +858,8 @@ pub struct TargetConfig {
     /// The maximum number of response bytes allowed for this target.
     /// When set, responses larger than this limit may be truncated or aborted.
     pub max_bytes_allowed: Option<u64>,
+    /// Whitelist patterns to allow through the network.
+    pub whitelist_patterns: Option<Vec<String>>,
 }
 
 impl Default for TargetConfig {
@@ -873,6 +879,7 @@ impl Default for TargetConfig {
             extra_headers: Default::default(),
             intercept_manager: NetworkInterceptManager::Unknown,
             max_bytes_allowed: None,
+            whitelist_patterns: None,
         }
     }
 }

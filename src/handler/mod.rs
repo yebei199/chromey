@@ -411,7 +411,7 @@ impl Handler {
 
     /// Process an incoming event read from the websocket
     fn on_event(&mut self, event: CdpEventMessage) {
-        if let Some(ref session_id) = event.session_id {
+        if let Some(session_id) = &event.session_id {
             if let Some(session) = self.sessions.get(session_id.as_str()) {
                 if let Some(target) = self.targets.get_mut(session.target_id()) {
                     return target.on_event(event);
@@ -471,6 +471,7 @@ impl Handler {
                 only_html: self.config.only_html && self.config.created_first_target,
                 intercept_manager: self.config.intercept_manager,
                 max_bytes_allowed: self.config.max_bytes_allowed,
+                whitelist_patterns: self.config.whitelist_patterns.clone(),
             },
             browser_ctx,
         );
@@ -776,6 +777,8 @@ pub struct HandlerConfig {
     pub intercept_manager: NetworkInterceptManager,
     /// The max bytes to receive.
     pub max_bytes_allowed: Option<u64>,
+    /// Optional per-run/per-site whitelist of URL substrings (scripts/resources).
+    pub whitelist_patterns: Option<Vec<String>>,
 }
 
 impl Default for HandlerConfig {
@@ -798,6 +801,7 @@ impl Default for HandlerConfig {
             created_first_target: false,
             intercept_manager: NetworkInterceptManager::Unknown,
             max_bytes_allowed: None,
+            whitelist_patterns: None,
         }
     }
 }
