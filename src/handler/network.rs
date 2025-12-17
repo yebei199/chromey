@@ -103,8 +103,26 @@ lazy_static! {
         "https://ct.captcha-delivery.com/",
         "https://cdn.auth0.com/client",
         "https://captcha.px-cloud.net/",
-        "https://static.intercomassets.com/", // help pages
-        "/cdn-cgi/challenge-platform/"
+        "https://www.gstatic.com/recaptcha/",
+        "https://www.google.com/recaptcha/api2/",
+        "https://www.recaptcha.net/recaptcha/",
+        "https://www.recaptcha.net/recaptcha/api2/",
+        "https://js.hcaptcha.com/1/api.js",
+        "https://hcaptcha.com/1/api.js",
+        "https://js.datadome.co/tags.js",
+        "https://api-js.datadome.co/",
+        "https://client.perimeterx.net/",
+        "https://captcha.px-cdn.net/",
+        "https://captcha.px-cloud.net/",
+        "https://s.perimeterx.net/",
+        "https://client-api.arkoselabs.com/v2/",
+        "https://static.geetest.com/v4/gt4.js",
+        "https://static.geetest.com/",
+        "https://cdn.jsdelivr.net/npm/@friendlycaptcha/",
+        "https://cdn.perfdrive.com/aperture/",
+        "https://assets.queue-it.net/",
+        "/cdn-cgi/challenge-platform/",
+        "/_Incapsula_Resource",
     ];
 
     /// Determine if a script should be rendered in the browser by name.
