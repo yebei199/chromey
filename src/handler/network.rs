@@ -103,6 +103,7 @@ lazy_static! {
         "https://ct.captcha-delivery.com/",
         "https://cdn.auth0.com/client",
         "https://captcha.px-cloud.net/",
+        "https://static.intercomassets.com/", // help pages
         "/cdn-cgi/challenge-platform/"
     ];
 
