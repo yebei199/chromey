@@ -9,6 +9,7 @@ use futures::StreamExt;
 async fn test_connect(target: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut conf = HandlerConfig::default();
 
+    conf.ignore_javascript = true;
     conf.request_intercept = true;
 
     let (mut browser, mut handler) =

@@ -67,7 +67,7 @@ fn eq_ignore_ascii_case(a: &str, b: &str) -> bool {
 }
 
 #[inline]
-fn ends_with_ignore_ascii_case(hay: &str, suf: &str) -> bool {
+pub fn ends_with_ignore_ascii_case(hay: &str, suf: &str) -> bool {
     if suf.len() > hay.len() {
         return false;
     }
@@ -78,8 +78,70 @@ fn ends_with_ignore_ascii_case(hay: &str, suf: &str) -> bool {
         .all(|(x, y)| x.to_ascii_lowercase() == y.to_ascii_lowercase())
 }
 
+#[inline]
+pub fn base_domain_from_any(s: &str) -> &str {
+    if let Some((h, _)) = host_and_rest(s) {
+        base_domain_from_host(h)
+    } else {
+        base_domain_from_host(s)
+    }
+}
+
+#[inline]
+pub fn first_label(host: &str) -> &str {
+    let h = host.trim_end_matches('.');
+    match h.find('.') {
+        Some(i) => &h[..i],
+        None => h,
+    }
+}
+
+#[inline]
+pub fn host_contains_label_icase(host: &str, label: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    let label = label.trim_matches('.');
+
+    if host.is_empty() || label.is_empty() {
+        return false;
+    }
+
+    let hb = host.as_bytes();
+    let lb = label.as_bytes();
+
+    let mut i = 0usize;
+    while i < hb.len() {
+        while i < hb.len() && hb[i] == b'.' {
+            i += 1;
+        }
+        if i >= hb.len() {
+            break;
+        }
+
+        let start = i;
+        while i < hb.len() && hb[i] != b'.' {
+            i += 1;
+        }
+        let end = i;
+
+        if end - start == lb.len() {
+            let mut ok = true;
+            for k in 0..lb.len() {
+                if hb[start + k].to_ascii_lowercase() != lb[k].to_ascii_lowercase() {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Host matches base if host == base OR host ends with ".{base}" (case-insensitive),
-/// with a required dot boundary to prevent "evil-logrocket.com" matching "logrocket.com".
+/// with a required dot boundary to prevent "evil-mainr.com" matching "mainr.com".
 #[inline]
 pub fn host_is_subdomain_of(host: &str, base: &str) -> bool {
     let host = host.trim_end_matches('.');
@@ -101,26 +163,55 @@ pub fn host_is_subdomain_of(host: &str, base: &str) -> bool {
     host.as_bytes().get(dot_pos) == Some(&b'.') && ends_with_ignore_ascii_case(host, base)
 }
 
-/// PURE: Given a base domain (already computed) and a URL, returns the “relative” path
+/// Common subdomain labels.
+static COMMON_SUBDOMAIN_LABELS: phf::Set<&'static str> = phf::phf_set! {
+    "www","m","amp","api","cdn","static","assets","img","images","media","files",
+    "login","auth","sso","id","account","accounts",
+    "app","apps","dashboard","admin","portal","console",
+    "status","support","help","docs","blog",
+    "dev","staging","stage","test","qa","uat","beta","alpha","preview","demo","sandbox",
+    "uploads","download","storage","origin","edge","cache",
+    "mail","email","smtp","mx","webmail",
+    "graphql","rpc","ws",
+};
+
+#[inline]
+/// Common sub domains.
+fn is_common_subdomain_label(lbl: &str) -> bool {
+    if lbl.is_empty() {
+        return false;
+    }
+    let lower = lbl.to_ascii_lowercase(); // alloc
+    COMMON_SUBDOMAIN_LABELS.contains(lower.as_str())
+}
+
+#[inline]
+pub fn base_domain_from_url<'a>(main_url: &'a str) -> Option<&'a str> {
+    let (host, _) = host_and_rest(main_url)?;
+    Some(base_domain_from_host(host))
+}
+
+/// Given a base domain (already computed) and a URL, returns the “relative” path
 /// for same-site/subdomain URLs, otherwise returns the original URL.
 #[inline]
-pub fn rel_for_ignore_script<'a>(base_domain: &str, url: &'a str) -> Cow<'a, str> {
+pub fn rel_for_ignore_script<'a>(main_host_or_base: &str, url: &'a str) -> Cow<'a, str> {
     if url.starts_with('/') {
         return Cow::Borrowed(url);
     }
 
-    let base = base_domain.trim_end_matches('.');
+    let base = base_domain_from_host(main_host_or_base.trim_end_matches('.'));
+    let base = base.trim_end_matches('.');
     if base.is_empty() {
         return Cow::Borrowed(url);
     }
 
+    let brand = first_label(base);
+
     if let Some((host, rest)) = host_and_rest(url) {
-        if host_is_subdomain_of(host, base) {
-            // Convert same-site absolute URL into a path-like string.
+        if host_is_subdomain_of(host, base) || host_contains_label_icase(host, brand) {
             if rest.starts_with('/') {
                 return Cow::Borrowed(rest);
             }
-            // e.g. "https://x.com?y" or "https://x.com#y"
             return Cow::Borrowed("/");
         }
     }
@@ -135,7 +226,6 @@ fn is_common_cc_sld(sld: &str) -> bool {
     match s.len() {
         2 => matches!(
             [s[0].to_ascii_lowercase(), s[1].to_ascii_lowercase()],
-            // very common 2-letter buckets (JP uses a lot of these)
             [b'c', b'o'] | // co
             [b'a', b'c'] | // ac
             [b'g', b'o'] | // go
@@ -178,7 +268,12 @@ fn is_common_cc_sld(sld: &str) -> bool {
 }
 
 #[inline]
-/// Get the base domain from a host.
+/// Get the base “site” domain from a host.
+///
+/// - Normal sites: `staging.mainr.com` -> `mainr.com`
+/// - ccTLD-ish: `a.b.example.co.uk` -> `example.co.uk` (existing heuristic)
+/// - Multi-tenant SaaS: `mainr.chilipiper.com` -> `mainr.chilipiper.com`
+///   (keeps one extra label when it looks like a tenant, not `www`/`cdn`/etc.)
 pub fn base_domain_from_host(host: &str) -> &str {
     let mut h = host.trim_end_matches('.');
     if let Some(x) = h.strip_prefix("www.") {
@@ -188,33 +283,46 @@ pub fn base_domain_from_host(host: &str) -> &str {
         h = x;
     }
 
-    // Find last two dots (positions)
+    // Find last two dots
     let last_dot = match h.rfind('.') {
         Some(p) => p,
         None => return h,
     };
     let prev_dot = match h[..last_dot].rfind('.') {
         Some(p) => p,
-        None => return h,
-    }; // only 1 dot => return host
+        None => return h, // only 1 dot
+    };
 
-    // last label (tld)
     let tld = &h[last_dot + 1..];
-    let sld = &h[prev_dot + 1..last_dot]; // second-level (or suffix-part)
-    let last2 = &h[prev_dot + 1..]; // "example.com" or "co.uk"
+    let sld = &h[prev_dot + 1..last_dot];
 
-    // If it looks like a 2-level public suffix, return last 3 labels
-    if tld.len() == 2 {
-        let sld_is_common = is_common_cc_sld(sld);
+    let mut base = &h[prev_dot + 1..]; // "example.com" or "co.uk"
 
-        if sld_is_common {
-            if let Some(prev2_dot) = h[..prev_dot].rfind('.') {
-                return &h[prev2_dot + 1..];
+    if tld.len() == 2 && is_common_cc_sld(sld) {
+        if let Some(prev2_dot) = h[..prev_dot].rfind('.') {
+            base = &h[prev2_dot + 1..]; // "example.co.uk"
+        }
+    }
+
+    if h.len() > base.len() + 1 {
+        let base_start = h.len() - base.len();
+        let boundary = base_start - 1;
+        if h.as_bytes().get(boundary) == Some(&b'.') {
+            let left_part = &h[..boundary];
+            // label immediately to the left of base
+            let (lbl_start, lbl) = match left_part.rfind('.') {
+                Some(p) => (p + 1, &left_part[p + 1..]),
+                None => (0, left_part),
+            };
+
+            if !lbl.is_empty() && !is_common_subdomain_label(lbl) {
+                // return "tenant.base" => slice starting at lbl_start
+                return &h[lbl_start..];
             }
         }
     }
 
-    last2
+    base
 }
 
 #[cfg(test)]
@@ -223,35 +331,32 @@ mod tests {
 
     #[test]
     fn test_domain_match_basic_and_subdomains() {
-        let base = "logrocket.com";
+        let base = "mainr.com";
 
-        assert!(host_is_subdomain_of("logrocket.com", base));
-        assert!(host_is_subdomain_of("staging.logrocket.com", base));
-        assert!(host_is_subdomain_of("a.b.c.logrocket.com", base));
+        assert!(host_is_subdomain_of("mainr.com", base));
+        assert!(host_is_subdomain_of("staging.mainr.com", base));
+        assert!(host_is_subdomain_of("a.b.c.mainr.com", base));
 
         // case-insensitive
-        assert!(host_is_subdomain_of(
-            "StAgInG.LoGrOcKeT.CoM",
-            "LOGROCKET.COM"
-        ));
+        assert!(host_is_subdomain_of("StAgInG.mainr.CoM", "mainr.COM"));
     }
 
     #[test]
     fn test_domain_match_no_false_positives() {
-        let base = "logrocket.com";
+        let base = "mainr.com";
 
         // must be dot-boundary
-        assert!(!host_is_subdomain_of("evil-logrocket.com", base));
-        assert!(!host_is_subdomain_of("logrocket.com.evil.com", base));
-        assert!(!host_is_subdomain_of("staginglogrocket.com", base));
-        assert!(!host_is_subdomain_of("logrocket.co", base));
+        assert!(!host_is_subdomain_of("evil-mainr.com", base));
+        assert!(!host_is_subdomain_of("mainr.com.evil.com", base));
+        assert!(!host_is_subdomain_of("stagingmainr.com", base));
+        assert!(!host_is_subdomain_of("mainr.co", base));
     }
 
     #[test]
     fn test_host_and_rest_handles_userinfo_port_ipv6() {
         let (h, rest) =
-            host_and_rest("https://user:pass@staging.logrocket.com:8443/a.js?x=1#y").unwrap();
-        assert_eq!(h, "staging.logrocket.com");
+            host_and_rest("https://user:pass@staging.mainr.com:8443/a.js?x=1#y").unwrap();
+        assert_eq!(h, "staging.mainr.com");
         assert_eq!(rest, "/a.js?x=1#y");
 
         let (h, rest) = host_and_rest("http://[::1]:8080/path").unwrap();
@@ -260,16 +365,16 @@ mod tests {
     }
 
     #[test]
-    fn test_rel_for_ignore_script_logrocket_example() {
-        let base = "logrocket.com";
+    fn test_rel_for_ignore_script_mainr_example() {
+        let base = "mainr.com";
 
-        let main = "https://logrocket.com/careers";
+        let main = "https://mainr.com/careers";
         assert_eq!(rel_for_ignore_script(base, main).as_ref(), "/careers");
 
-        let script = "https://staging.logrocket.com/LogRocket.min.js";
+        let script = "https://staging.mainr.com/mainr.min.js";
         assert_eq!(
             rel_for_ignore_script(base, script).as_ref(),
-            "/LogRocket.min.js"
+            "/mainr.min.js"
         );
 
         // Different site stays absolute
@@ -295,5 +400,45 @@ mod tests {
         let base = "example.com";
         let u = "blob:https://example.com/path/to/blob";
         assert_eq!(rel_for_ignore_script(base, u).as_ref(), "/path/to/blob");
+    }
+
+    #[test]
+    fn test_base_domain_tenant_subdomain() {
+        let base = base_domain_from_host("mainr.chilipiper.com");
+        assert_eq!(base, "mainr.chilipiper.com");
+
+        // same tenant (subdomain) becomes relative
+        let u = "https://assets.mainr.chilipiper.com/a.js";
+        assert_eq!(rel_for_ignore_script(base, u).as_ref(), "/a.js");
+
+        // different tenant must NOT match
+        let other = "https://othertenant.chilipiper.com/a.js";
+        assert_eq!(rel_for_ignore_script(base, other).as_ref(), other);
+    }
+
+    #[test]
+    fn test_brand_label_allows_vendor_subdomain() {
+        let base = "mainr.com";
+        let u = "https://mainr.chilipiper.com/concierge-js/cjs/concierge.js";
+        assert_eq!(
+            rel_for_ignore_script(base, u).as_ref(),
+            "/concierge-js/cjs/concierge.js"
+        );
+
+        // Important: not a substring match
+        let bad = "https://evil-mainr.com/x.js";
+        assert_eq!(rel_for_ignore_script(base, bad).as_ref(), bad);
+    }
+
+    #[test]
+    fn test_allows_vendor_host_when_brand_label_matches_main_site() {
+        // main page host is www.mainr.com
+        let main_host = "www.mainr.com";
+
+        let u = "https://mainr.chilipiper.com/concierge-js/cjs/concierge.js";
+        assert_eq!(
+            rel_for_ignore_script(main_host, u).as_ref(),
+            "/concierge-js/cjs/concierge.js"
+        );
     }
 }

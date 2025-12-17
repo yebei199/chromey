@@ -7,7 +7,10 @@ use crate::auth::Credentials;
 use crate::cache::BasicCachePolicy;
 use crate::cmd::CommandChain;
 use crate::handler::http::HttpRequest;
-use crate::handler::network_utils::{base_domain_from_host, host_and_rest, host_is_subdomain_of};
+use crate::handler::network_utils::{
+    base_domain_from_any, base_domain_from_host, first_label, host_and_rest,
+    host_contains_label_icase, host_is_subdomain_of,
+};
 use aho_corasick::AhoCorasick;
 use case_insensitive_string::CaseInsensitiveString;
 use chromiumoxide_cdp::cdp::browser_protocol::fetch::{RequestPattern, RequestStage};
@@ -72,6 +75,7 @@ lazy_static! {
         "https://google.com/recaptcha/api.js",
         "https://captcha.px-cloud.net/",
         "https://cdn.auth0.com/js/lock/",
+        "https://cdn.auth0.com/client",
         "https://js.stripe.com/",
         "https://cdn.prod.website-files.com/", // webflow cdn scripts
         "https://cdnjs.cloudflare.com/",        // cloudflare cdn scripts
@@ -97,6 +101,7 @@ lazy_static! {
         "https://geo.captcha-delivery.com/captcha/",
         "https://img1.wsimg.com/parking-lander/static/js/main.d9ebbb8c.js", // parking landing page iframe
         "https://ct.captcha-delivery.com/",
+        "https://cdn.auth0.com/client",
         "https://captcha.px-cloud.net/",
         "/cdn-cgi/challenge-platform/"
     ];
@@ -397,23 +402,30 @@ impl NetworkManager {
 
     #[inline]
     fn rel_for_ignore_script<'a>(&self, url: &'a str) -> Cow<'a, str> {
-        // Already relative (or root-relative)
         if url.starts_with('/') {
             return Cow::Borrowed(url);
         }
 
-        let base = self.document_target_domain.as_str();
+        let base_raw = self.document_target_domain.as_str();
+
+        if base_raw.is_empty() {
+            return Cow::Borrowed(url);
+        }
+
+        let base = base_domain_from_any(base_raw).trim_end_matches('.');
         if base.is_empty() {
             return Cow::Borrowed(url);
         }
 
+        let brand = first_label(base);
+
         if let Some((host, rest)) = host_and_rest(url) {
-            if host_is_subdomain_of(host, base) {
-                if rest.starts_with('/') {
-                    return Cow::Borrowed(rest);
+            if host_is_subdomain_of(host, base) || host_contains_label_icase(host, brand) {
+                return if rest.starts_with('/') {
+                    Cow::Borrowed(rest)
                 } else {
-                    return Cow::Borrowed("/");
-                }
+                    Cow::Borrowed("/")
+                };
             }
         }
 
