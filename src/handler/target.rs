@@ -3,7 +3,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use chromiumoxide_cdp::cdp::browser_protocol::target::DetachFromTargetParams;
 use futures::channel::oneshot::Sender;
 use futures::stream::Stream;
 use futures::task::{Context, Poll};
@@ -37,7 +36,7 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
     ExecutionContextId, RunIfWaitingForDebuggerParams,
 };
 use chromiumoxide_cdp::cdp::CdpEventMessage;
-use chromiumoxide_types::{Command, Method, Request, Response};
+use chromiumoxide_types::{Command, Method, MethodId, Request, Response};
 use spider_network_blocker::intercept_manager::NetworkInterceptManager;
 use std::time::Duration;
 
@@ -63,8 +62,8 @@ macro_rules! advance_state {
 }
 
 lazy_static::lazy_static! {
-    /// Initial start command params.
-    static ref INIT_COMMANDS_PARAMS: Vec<(chromiumoxide_types::MethodId, serde_json::Value)> = {
+    /// Initial start command params (global SetAutoAttach + disable logging + optional performance).
+    static ref INIT_COMMANDS_PARAMS: Vec<(MethodId, serde_json::Value)> = {
         if let Ok(attach) = SetAutoAttachParams::builder()
             .flatten(true)
             .auto_attach(true)
@@ -98,11 +97,13 @@ lazy_static::lazy_static! {
             }
     };
 
-    /// Attach to target commands
-    static ref ATTACH_TARGET: (chromiumoxide_types::MethodId, serde_json::Value) = {
+    /// Attach to target commands (RunIfWaitingForDebugger).
+    static ref ATTACH_TARGET: (MethodId, serde_json::Value) = {
         let runtime_cmd = RunIfWaitingForDebuggerParams::default();
-
-        (runtime_cmd.identifier(), serde_json::to_value(runtime_cmd).unwrap_or_default())
+        (
+            runtime_cmd.identifier(),
+            serde_json::to_value(runtime_cmd).unwrap_or_default()
+        )
     };
 }
 
@@ -140,6 +141,10 @@ pub struct Target {
     wait_for_network_almost_idle: Vec<Sender<ArcHttpRequest>>,
     /// The sender who requested the page.
     initiator: Option<Sender<Result<Page>>>,
+    /// Emulation init commands we want to forward to worker / service_worker / shared_worker targets.
+    attached_emulation_init_cmds: Vec<(MethodId, serde_json::Value)>,
+    /// Set attached agents.
+    attached_user_agent_override: Option<(MethodId, serde_json::Value)>,
 }
 
 impl Target {
@@ -193,6 +198,8 @@ impl Target {
             event_listeners: Default::default(),
             initiator: None,
             browser_context,
+            attached_emulation_init_cmds: Vec::new(),
+            attached_user_agent_override: None,
         }
     }
 
@@ -408,18 +415,24 @@ impl Target {
                     }));
                 }
 
-                if "service_worker" == &ev.target_info.r#type {
-                    let detach_command = DetachFromTargetParams::builder()
-                        .session_id(ev.session_id.clone())
-                        .build();
+                let target_type = ev.target_info.r#type.as_str();
+                let is_worker_like =
+                    matches!(target_type, "worker" | "shared_worker" | "service_worker");
 
-                    let method = detach_command.identifier();
-
-                    if let Ok(params) = serde_json::to_value(detach_command) {
+                if is_worker_like {
+                    for (method, params) in &self.attached_emulation_init_cmds {
                         self.queued_events.push_back(TargetEvent::Request(Request {
-                            method,
-                            session_id: self.session_id.clone().map(Into::into),
-                            params,
+                            method: method.clone(),
+                            session_id: Some(ev.session_id.clone().into()),
+                            params: params.clone(),
+                        }));
+                    }
+
+                    if let Some((method, params)) = &self.attached_user_agent_override {
+                        self.queued_events.push_back(TargetEvent::Request(Request {
+                            method: method.clone(),
+                            session_id: Some(ev.session_id.clone().into()),
+                            params: params.clone(),
                         }));
                     }
                 }
@@ -550,7 +563,29 @@ impl Target {
                 );
             }
             TargetInit::InitializingEmulation(cmds) => {
-                advance_state!(self, cx, now, cmds, TargetInit::Initialized);
+                if let Poll::Ready(poll) = cmds.poll(now) {
+                    return match poll {
+                        None => {
+                            self.init_state = TargetInit::Initialized;
+                            self.poll(cx, now)
+                        }
+                        Some(Ok((method, params))) => {
+                            if method.as_ref().starts_with("Emulation.") {
+                                self.attached_emulation_init_cmds
+                                    .push((method.clone(), params.clone()));
+                            }
+
+                            Some(TargetEvent::Request(Request {
+                                method,
+                                session_id: self.session_id.clone().map(Into::into),
+                                params,
+                            }))
+                        }
+                        Some(Err(_)) => Some(self.on_initialization_failed()),
+                    };
+                } else {
+                    return None;
+                }
             }
             TargetInit::Initialized => {
                 if let Some(initiator) = self.initiator.take() {
@@ -635,6 +670,15 @@ impl Target {
                                     }
                                 }
                             }
+
+                            let method_str = cmd.method.as_ref();
+                            if method_str == "Network.setUserAgentOverride"
+                                || method_str == "Emulation.setUserAgentOverride"
+                            {
+                                self.attached_user_agent_override =
+                                    Some((cmd.method.clone(), cmd.params.clone()));
+                            }
+
                             self.queued_events.push_back(TargetEvent::Command(cmd));
                         }
                         TargetMessage::MainFrame(tx) => {
@@ -816,49 +860,20 @@ impl Target {
 /// Configuration for how a single target/page should be fetched and processed.
 #[derive(Debug, Clone)]
 pub struct TargetConfig {
-    /// Whether to ignore TLS/HTTPS certificate errors (e.g. self-signed or expired certs).
-    /// When `true`, connections will proceed even if certificate validation fails.
     pub ignore_https_errors: bool,
-    /// Request timeout to use for the main navigation / resource fetch.
-    /// This is the total time allowed before a request is considered failed.
     pub request_timeout: Duration,
-    /// Optional browser viewport to use for this target.
-    /// When `None`, the default viewport (or headless browser default) is used.
     pub viewport: Option<Viewport>,
-    /// Enable request interception for this target.
-    /// When `true`, all network requests will pass through the intercept manager.
     pub request_intercept: bool,
-    /// Enable caching for this target.
-    /// When `true`, responses may be read from and written to the cache layer.
     pub cache_enabled: bool,
-    /// If `true`, skip visual/asset resources that are not required for HTML content
-    /// (e.g. images, fonts, media). Useful for performance-oriented crawls.
     pub ignore_visuals: bool,
-    /// If `true`, block JavaScript execution (or avoid loading JS resources)
-    /// for this target. This is useful for purely static HTML crawls.
     pub ignore_javascript: bool,
-    /// If `true`, block analytics / tracking requests (e.g. Google Analytics,
-    /// common tracker domains, etc.).
     pub ignore_analytics: bool,
-    /// If `true`, block stylesheets and related CSS resources for this target.
-    /// This can reduce bandwidth when only raw HTML is needed.
     pub ignore_stylesheets: bool,
-    /// If `true`, only HTML documents will be fetched/kept.
-    /// Non-HTML subresources may be skipped entirely.
     pub only_html: bool,
-    /// Whether service workers are allowed for this target.
-    /// When `true`, service workers may register and intercept requests.
     pub service_worker_enabled: bool,
-    /// Extra HTTP headers to send with each request for this target.
-    /// Keys should be header names, values their corresponding header values.
     pub extra_headers: Option<std::collections::HashMap<String, String>>,
-    /// Network intercept manager used to make allow/deny/modify decisions
-    /// for requests when `request_intercept` is enabled.
     pub intercept_manager: NetworkInterceptManager,
-    /// The maximum number of response bytes allowed for this target.
-    /// When set, responses larger than this limit may be truncated or aborted.
     pub max_bytes_allowed: Option<u64>,
-    /// Whitelist patterns to allow through the network.
     pub whitelist_patterns: Option<Vec<String>>,
 }
 
@@ -983,7 +998,7 @@ impl TargetInit {
 pub struct GetExecutionContext {
     /// For which world the execution context was requested
     pub dom_world: DOMWorldKind,
-    /// The if of the frame to get the `ExecutionContext` for
+    /// The id of the frame to get the `ExecutionContext` for
     pub frame_id: Option<FrameId>,
     /// Sender half of the channel to send the response back
     pub tx: Sender<Option<ExecutionContextId>>,

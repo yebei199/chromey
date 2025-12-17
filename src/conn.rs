@@ -150,20 +150,45 @@ impl<T: EventMessage + Unpin> Stream for Connection<T> {
         // read from the websocket
         match ready!(pin.ws.poll_next_unpin(cx)) {
             Some(Ok(WsMessage::Text(text))) => {
-                let ready = decode_message::<T>(text.as_bytes(), Some(&text));
-                Poll::Ready(Some(ready))
+                match decode_message::<T>(text.as_bytes(), Some(&text)) {
+                    Ok(msg) => Poll::Ready(Some(Ok(msg))),
+                    Err(err) => {
+                        tracing::debug!(
+                            target: "chromiumoxide::conn::raw_ws::parse_errors",
+                            "Dropping malformed text WS frame: {err}",
+                        );
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                }
             }
-            Some(Ok(WsMessage::Binary(buf))) => {
-                let ready = decode_message::<T>(&buf, None);
-                Poll::Ready(Some(ready))
-            }
+            Some(Ok(WsMessage::Binary(buf))) => match decode_message::<T>(&buf, None) {
+                Ok(msg) => Poll::Ready(Some(Ok(msg))),
+                Err(err) => {
+                    tracing::debug!(
+                        target: "chromiumoxide::conn::raw_ws::parse_errors",
+                        "Dropping malformed binary WS frame: {err}",
+                    );
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            },
             Some(Ok(WsMessage::Close(_))) => Poll::Ready(None),
             // ignore ping and pong
             Some(Ok(WsMessage::Ping(_))) | Some(Ok(WsMessage::Pong(_))) => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            Some(Ok(msg)) => Poll::Ready(Some(Err(CdpError::UnexpectedWsMessage(msg)))),
+            Some(Ok(msg)) => {
+                // Unexpected WS message type, but not fatal.
+                tracing::debug!(
+                    target: "chromiumoxide::conn::raw_ws::parse_errors",
+                    "Unexpected WS message type: {:?}",
+                    msg
+                );
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
             Some(Err(err)) => Poll::Ready(Some(Err(CdpError::Ws(err)))),
             None => {
                 // ws connection closed
