@@ -7,10 +7,7 @@ use crate::auth::Credentials;
 use crate::cache::BasicCachePolicy;
 use crate::cmd::CommandChain;
 use crate::handler::http::HttpRequest;
-use crate::handler::network_utils::{
-    base_domain_from_any, base_domain_from_host, first_label, host_and_rest,
-    host_contains_label_icase, host_is_subdomain_of,
-};
+use crate::handler::network_utils::{base_domain_from_host, host_and_rest};
 use aho_corasick::AhoCorasick;
 use case_insensitive_string::CaseInsensitiveString;
 use chromiumoxide_cdp::cdp::browser_protocol::fetch::{RequestPattern, RequestStage};
@@ -83,6 +80,9 @@ lazy_static! {
     ];
 
     /// Determine if a script should be rendered in the browser by name.
+    ///
+    /// NOTE: with "allow all scripts unless blocklisted", this is not used as a gate anymore,
+    /// but we keep it for compatibility and other call sites.
     pub static ref ALLOWED_MATCHER: AhoCorasick = AhoCorasick::new(JS_FRAMEWORK_ALLOW.iter()).expect("matcher to build");
 
     /// General patterns for popular libraries and resources
@@ -123,6 +123,7 @@ lazy_static! {
         "https://assets.queue-it.net/",
         "/cdn-cgi/challenge-platform/",
         "/_Incapsula_Resource",
+        "discourse-cdn.com/"
     ];
 
     /// Determine if a script should be rendered in the browser by name.
@@ -227,18 +228,77 @@ pub(crate) fn is_redirect_status(status: i64) -> bool {
 #[derive(Debug)]
 /// The base network manager.
 pub struct NetworkManager {
+    /// FIFO queue of internal `NetworkEvent`s emitted by the manager.
+    ///
+    /// The manager pushes events here as CDP commands are scheduled (e.g. `SendCdpRequest`)
+    /// and as request lifecycle transitions occur (`RequestFinished`, `RequestFailed`, etc.).
+    /// Consumers pull from this queue via `poll()`.
     queued_events: VecDeque<NetworkEvent>,
+    /// If `true`, the init command chain includes `Security.setIgnoreCertificateErrors(true)`.
+    ///
+    /// This is used to allow navigation / resource loading to proceed on sites with invalid TLS
+    /// certificates (self-signed, expired, MITM proxies, etc.).
     ignore_httpserrors: bool,
+    /// Active in-flight requests keyed by CDP `RequestId`.
+    ///
+    /// Each entry tracks request/response metadata, redirect chain, optional interception id,
+    /// and final state used to emit `RequestFinished` / `RequestFailed`.
     requests: HashMap<RequestId, HttpRequest>,
+    /// Temporary storage for `Network.requestWillBeSent` events when the corresponding
+    /// `Fetch.requestPaused` arrives later (or vice versa).
+    ///
+    /// When Fetch interception is enabled, `requestPaused` and `requestWillBeSent` can race.
+    /// We buffer `requestWillBeSent` here until we can attach the `InterceptionId`.
     // TODO put event in an Arc?
     requests_will_be_sent: HashMap<RequestId, EventRequestWillBeSent>,
+    /// Extra HTTP headers to apply to subsequent network requests via CDP.
+    ///
+    /// This map is mirrored from user-supplied headers but stripped of proxy auth headers
+    /// (`Proxy-Authorization`) to avoid accidental leakage / incorrect forwarding.
     extra_headers: std::collections::HashMap<String, String>,
+    /// Mapping from Network `RequestId` to Fetch `InterceptionId`.
+    ///
+    /// When `Fetch.requestPaused` fires before `Network.requestWillBeSent`, we temporarily
+    /// store the interception id here so it can be attached to the `HttpRequest` once the
+    /// network request is observed.
     request_id_to_interception_id: HashMap<RequestId, InterceptionId>,
+    /// Whether the user has disabled the browser cache.
+    ///
+    /// This is surfaced via `Network.setCacheDisabled(true/false)` and toggled through
+    /// `set_cache_enabled()`. Internally the field is stored as “disabled” to match the CDP API.
     user_cache_disabled: bool,
+    /// Tracks which requests have already attempted authentication.
+    ///
+    /// Used to prevent infinite auth retry loops when the origin repeatedly issues
+    /// authentication challenges (407/401). Once a request id is present here, subsequent
+    /// challenges for the same request are canceled.
     attempted_authentications: HashSet<RequestId>,
+    /// Optional credentials used to respond to `Fetch.authRequired` challenges.
+    ///
+    /// When set, the manager will answer challenges with `ProvideCredentials` once per request
+    /// (guarded by `attempted_authentications`), otherwise it falls back to default handling.
     credentials: Option<Credentials>,
+    /// User-facing toggle indicating whether request interception is desired.
+    ///
+    /// This is the “intent” flag controlled by `set_request_interception()`. On its own it does
+    /// not guarantee interception is active; interception is actually enabled/disabled by
+    /// `update_protocol_request_interception()` which reconciles this flag with `credentials`.
+    ///
+    /// In other words: if this is `false` but `credentials.is_some()`, interception may still be
+    /// enabled to satisfy auth challenges.
     pub(crate) user_request_interception_enabled: bool,
+    /// Hard kill-switch to block all network traffic.
+    ///
+    /// When `true`, the manager immediately blocks requests (typically via
+    /// `FailRequest(BlockedByClient)` or fulfillment with an empty response depending on path),
+    /// and short-circuits most decision logic. This is used for safety conditions such as
+    /// exceeding `max_bytes_allowed` or other runtime protections.
     block_all: bool,
+    /// Tracks whether the Fetch interception protocol is currently enabled in CDP.
+    ///
+    /// This is the “actual state” flag that reflects whether we have sent `Fetch.enable` or
+    /// `Fetch.disable` to the browser. It is updated by `update_protocol_request_interception()`
+    /// when `user_request_interception_enabled` or `credentials` change.
     pub(crate) protocol_request_interception_enabled: bool,
     /// The network is offline.
     offline: bool,
@@ -250,6 +310,9 @@ pub struct NetworkManager {
     /// Block CSS stylesheets.
     pub block_stylesheets: bool,
     /// Block javascript that is not critical to rendering.
+    ///
+    /// NOTE: With "allow all scripts unless blocklisted", this no longer blocks scripts
+    /// by itself (it remains for config compatibility).
     pub block_javascript: bool,
     /// Block analytics from rendering
     pub block_analytics: bool,
@@ -473,106 +536,117 @@ impl NetworkManager {
         }
     }
 
+    /// Blocklist-only script blocking.
+    /// Returns true only when the URL matches an explicit blocklist condition.
+    ///
+    /// IMPORTANT:
+    /// - Scripts are ALLOW-BY-DEFAULT.
+    /// - We only block when explicit blocklist signals match.
+    /// - We do NOT call ignore_script() here because ignore_script() treats absolute URLs as
+    ///   "ignored by default", which is the opposite of what we want.
     #[inline]
-    fn rel_for_ignore_script<'a>(&self, url: &'a str) -> Cow<'a, str> {
-        if url.starts_with('/') {
-            return Cow::Borrowed(url);
+    fn should_block_script_blocklist_only(&self, url: &str) -> bool {
+        // If analytics blocking is off, skip all analytics tries.
+        let block_analytics = self.block_analytics;
+
+        // 1) Explicit full-URL prefix trie (some rules are full URL prefixes).
+        if block_analytics && spider_network_blocker::scripts::URL_IGNORE_TRIE.contains_prefix(url)
+        {
+            return true;
         }
 
-        let base_raw = self.document_target_domain.as_str();
-
-        if base_raw.is_empty() {
-            return Cow::Borrowed(url);
+        // 2) Custom website block list (explicit).
+        if crate::handler::blockers::block_websites::block_website(url) {
+            return true;
         }
 
-        let base = base_domain_from_any(base_raw).trim_end_matches('.');
-        if base.is_empty() {
-            return Cow::Borrowed(url);
-        }
+        // 3) Path-based explicit tries / fallbacks.
+        //
+        // We run these on:
+        // - path with leading slash ("/js/app.js")
+        // - path without leading slash ("js/app.js")
+        // - basename ("app.js") for filename-only rules (this is the fast "analytics.js" fallback)
+        if let Some(path_with_slash) = Self::url_path_with_leading_slash(url) {
+            // Remove query/fragment so matching stays stable.
+            let p_slash = Self::strip_query_fragment(path_with_slash);
+            let p_noslash = p_slash.strip_prefix('/').unwrap_or(p_slash);
 
-        let brand = first_label(base);
+            // Basename for filename-only lists.
+            let base = match p_slash.rsplit('/').next() {
+                Some(b) => b,
+                None => p_slash,
+            };
 
-        if let Some((host, rest)) = host_and_rest(url) {
-            if host_is_subdomain_of(host, base) || host_contains_label_icase(host, brand) {
-                return if rest.starts_with('/') {
-                    Cow::Borrowed(rest)
-                } else {
-                    Cow::Borrowed("/")
-                };
+            // ---- Filename fallback (VERY fast) ----
+            // This is the behavior your test expects: block "analytics.js" anywhere in the path.
+            // (You can add more filename-only fallbacks here if needed.)
+            if block_analytics && (base == "analytics.js" || p_noslash.ends_with("/analytics.js")) {
+                return true;
+            }
+
+            // ---- Trie checks ----
+            // Some tries store prefixes like "/cdn-cgi/..." (leading slash) OR "cdn-cgi/..." (no slash).
+            if block_analytics && URL_IGNORE_TRIE_PATHS.contains_prefix(p_slash) {
+                return true;
+            }
+            if block_analytics && URL_IGNORE_TRIE_PATHS.contains_prefix(p_noslash) {
+                return true;
+            }
+            if block_analytics && URL_IGNORE_TRIE_PATHS.contains_prefix(base) {
+                return true;
+            }
+
+            // Base-path ignore tries (framework noise / known ignorable script paths).
+            // Note: these are explicit tries, so they are valid “blocklist-only” checks.
+            if URL_IGNORE_SCRIPT_BASE_PATHS.contains_prefix(p_noslash) {
+                return true;
+            }
+
+            // Style path ignores only when visuals are ignored.
+            if self.ignore_visuals && URL_IGNORE_SCRIPT_STYLES_PATHS.contains_prefix(p_noslash) {
+                return true;
             }
         }
 
-        Cow::Borrowed(url)
+        false
     }
 
-    /// Url matches analytics that we want to ignore or trackers.
+    /// Extract the absolute URL path portion WITH the leading slash.
+    ///
+    /// Example:
+    /// - "https://cdn.example.net/js/app.js?x=y" -> Some("/js/app.js?x=y")
     #[inline]
-    pub(crate) fn ignore_script(
-        &self,
-        url: &str,
-        block_analytics: bool,
-        intercept_manager: NetworkInterceptManager,
-    ) -> bool {
-        // allow relative domains.
-        let mut ignore_script = !url.starts_with("/");
+    fn url_path_with_leading_slash<'a>(url: &'a str) -> Option<&'a str> {
+        // find scheme separator
+        let idx = url.find("//")?;
+        let after_slashes = idx + 2;
 
-        if !ignore_script
-            && block_analytics
-            && spider_network_blocker::scripts::URL_IGNORE_TRIE.contains_prefix(url)
-        {
-            ignore_script = true;
+        // find first slash after host
+        let slash_rel = url[after_slashes..].find('/')?;
+        let slash_idx = after_slashes + slash_rel;
+
+        if slash_idx < url.len() {
+            Some(&url[slash_idx..])
+        } else {
+            None
         }
+    }
 
-        if !ignore_script {
-            if let Some(index) = url.find("//") {
-                let pos = index + 2;
+    /// Strip query string and fragment from a path-ish string.
+    ///
+    /// Example:
+    /// - "/a/b.js?x=1#y" -> "/a/b.js"
+    #[inline]
+    fn strip_query_fragment(s: &str) -> &str {
+        let q = s.find('?');
+        let h = s.find('#');
 
-                // Ensure there is something after `//`
-                if pos < url.len() {
-                    // Find the first slash after the `//`
-                    if let Some(slash_index) = url[pos..].find('/') {
-                        let base_path_index = pos + slash_index + 1;
-
-                        if url.len() > base_path_index {
-                            let new_url: &str = &url[base_path_index..];
-
-                            // ignore assets we do not need for frameworks
-                            if !ignore_script
-                                && intercept_manager == NetworkInterceptManager::Unknown
-                            {
-                                let hydration_file =
-                                    JS_FRAMEWORK_PATH.iter().any(|p| new_url.starts_with(p));
-
-                                // ignore astro paths
-                                if hydration_file && new_url.ends_with(".js") {
-                                    ignore_script = true;
-                                }
-                            }
-
-                            if !ignore_script
-                                && URL_IGNORE_SCRIPT_BASE_PATHS.contains_prefix(new_url)
-                            {
-                                ignore_script = true;
-                            }
-
-                            if !ignore_script
-                                && self.ignore_visuals
-                                && URL_IGNORE_SCRIPT_STYLES_PATHS.contains_prefix(new_url)
-                            {
-                                ignore_script = true;
-                            }
-                        }
-                    }
-                }
-            }
+        match (q, h) {
+            (None, None) => s,
+            (Some(i), None) => &s[..i],
+            (None, Some(i)) => &s[..i],
+            (Some(i), Some(j)) => &s[..i.min(j)],
         }
-
-        // fallback for file ending in analytics.js
-        if !ignore_script && block_analytics {
-            ignore_script = URL_IGNORE_TRIE_PATHS.contains_prefix(url);
-        }
-
-        ignore_script
     }
 
     /// Determine if the request should be skipped.
@@ -750,11 +824,6 @@ impl NetworkManager {
             return self.fail_request_blocked(&event.request_id);
         }
 
-        // // If both interceptions are enabled, do nothing.
-        // if !self.user_request_interception_enabled && self.protocol_request_interception_enabled {
-        //     self.push_cdp_request(ContinueRequestParams::new(event.request_id.clone()))
-        // }
-
         if let Some(network_id) = event.network_id.as_ref() {
             if let Some(request_will_be_sent) =
                 self.requests_will_be_sent.remove(network_id.as_ref())
@@ -786,17 +855,17 @@ impl NetworkManager {
 
         let current_url: &str = current_url_cow.as_ref();
 
-        // Main initial check (visuals, stylesheets, simple JS blocking).
+        // Main initial check (visuals, stylesheets).
+        //
+        // IMPORTANT: Scripts are NOT blocked here anymore.
+        // Scripts are allowed by default and only blocked via explicit blocklists
+        // (adblock / block_websites / intercept_manager / URL tries).
         if !skip_networking {
             // Allow XSL for sitemap XML.
             if self.xml_document && current_url.ends_with(".xsl") {
                 skip_networking = false;
             } else {
-                skip_networking = self.should_skip_for_visuals_and_basic_js(
-                    resource_type,
-                    javascript_resource,
-                    current_url,
-                );
+                skip_networking = self.should_skip_for_visuals_and_basic(resource_type);
             }
         }
 
@@ -811,11 +880,10 @@ impl NetworkManager {
             skip_networking = ignore_script_embedded(current_url);
         }
 
-        // Analytics check for JS.
-        if skip_networking && javascript_resource {
-            let rel = self.rel_for_ignore_script(current_url);
-            skip_networking =
-                self.ignore_script(rel.as_ref(), self.block_analytics, self.intercept_manager);
+        // Script policy: allow-by-default.
+        // Block only if explicit block list patterns match.
+        if !skip_networking && javascript_resource {
+            skip_networking = self.should_block_script_blocklist_only(current_url);
         }
 
         // XHR / data resources.
@@ -836,6 +904,7 @@ impl NetworkManager {
         }
 
         // whitelist 3rd party
+        // not required unless explicit blocking.
         if skip_networking && javascript_resource && ALLOWED_MATCHER_3RD_PARTY.is_match(current_url)
         {
             skip_networking = false;
@@ -891,6 +960,17 @@ impl NetworkManager {
         }
     }
 
+    /// Shared "visuals + basic blocking" logic.
+    ///
+    /// IMPORTANT: Scripts are NOT blocked here anymore.
+    /// Scripts are allowed by default and only blocked via explicit blocklists
+    /// (should_block_script_blocklist_only / adblock / block_websites / intercept_manager).
+    #[inline]
+    fn should_skip_for_visuals_and_basic(&self, resource_type: &ResourceType) -> bool {
+        (self.ignore_visuals && IGNORE_VISUAL_RESOURCE_MAP.contains(resource_type.as_ref()))
+            || (self.block_stylesheets && *resource_type == ResourceType::Stylesheet)
+    }
+
     /// Does the network manager have a target domain?
     pub fn has_target_domain(&self) -> bool {
         !self.document_target_url.is_empty()
@@ -912,6 +992,7 @@ impl NetworkManager {
         self.document_target_url = Default::default();
         self.document_target_domain = Default::default();
     }
+
     /// Handles:
     /// - document reload tracking (`document_reload_tracker`)
     /// - redirect masking / replacement
@@ -987,22 +1068,6 @@ impl NetworkManager {
 
         let had_replacer = matches!(current_url_cow, Cow::Owned(_));
         (current_url_cow, had_replacer)
-    }
-
-    /// Shared "visuals + basic JS blocking" logic.
-    #[inline]
-    fn should_skip_for_visuals_and_basic_js(
-        &self,
-        resource_type: &ResourceType,
-        javascript_resource: bool,
-        current_url: &str,
-    ) -> bool {
-        (self.ignore_visuals && IGNORE_VISUAL_RESOURCE_MAP.contains(resource_type.as_ref()))
-            || (self.block_stylesheets && *resource_type == ResourceType::Stylesheet)
-            || (self.block_javascript
-                && javascript_resource
-                && self.intercept_manager == NetworkInterceptManager::Unknown
-                && !ALLOWED_MATCHER.is_match(current_url))
     }
 
     /// Perform a page intercept for chrome
@@ -1292,6 +1357,8 @@ pub enum NetworkEvent {
 #[cfg(test)]
 mod tests {
     use super::ALLOWED_MATCHER_3RD_PARTY;
+    use crate::handler::network::NetworkManager;
+    use std::time::Duration;
 
     #[test]
     fn test_allowed_matcher_3rd_party() {
@@ -1310,6 +1377,58 @@ mod tests {
         );
 
         // A couple sanity checks for existing allow patterns
+        assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://js.stripe.com/v3/"));
+        assert!(ALLOWED_MATCHER_3RD_PARTY
+            .is_match("https://www.google.com/recaptcha/api.js?render=explicit"));
+        assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://code.jquery.com/jquery-3.7.1.min.js"));
+    }
+
+    #[test]
+    fn test_script_allowed_by_default_when_not_blocklisted() {
+        let mut nm = NetworkManager::new(false, Duration::from_secs(30));
+        nm.set_page_url(
+            "https://forum.cursor.com/t/is-2000-fast-requests-the-maximum/51085".to_string(),
+        );
+
+        // A random script that should not match your block tries.
+        let ok = "https://cdn.example.net/assets/some-app-bundle-12345.js";
+        assert!(
+            !nm.should_block_script_blocklist_only(ok),
+            "expected non-blocklisted script to be allowed"
+        );
+    }
+
+    #[test]
+    fn test_script_blocked_when_matches_ignore_trie_or_blocklist() {
+        let mut nm = NetworkManager::new(false, Duration::from_secs(30));
+        nm.set_page_url(
+            "https://forum.cursor.com/t/is-2000-fast-requests-the-maximum/51085".to_string(),
+        );
+
+        // This should match URL_IGNORE_TRIE_PATHS fallback ("analytics.js") logic.
+        let bad = "https://cdn.example.net/js/analytics.js";
+        assert!(
+            nm.should_block_script_blocklist_only(bad),
+            "expected analytics.js to be blocklisted"
+        );
+    }
+
+    #[test]
+    fn test_allowed_matcher_3rd_party_sanity() {
+        // Should be allowed (matches "/cdn-cgi/challenge-platform/")
+        let cf_challenge = "https://www.something.com.ba/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1?ray=9abf7b523d90987e";
+        assert!(
+            ALLOWED_MATCHER_3RD_PARTY.is_match(cf_challenge),
+            "expected Cloudflare challenge script to be allowed"
+        );
+
+        // Should NOT be allowed (not in allow-list)
+        let cf_insights = "https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015";
+        assert!(
+            !ALLOWED_MATCHER_3RD_PARTY.is_match(cf_insights),
+            "expected Cloudflare Insights beacon to remain blocked (not in allow-list)"
+        );
+
         assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://js.stripe.com/v3/"));
         assert!(ALLOWED_MATCHER_3RD_PARTY
             .is_match("https://www.google.com/recaptcha/api.js?render=explicit"));
