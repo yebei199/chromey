@@ -1012,6 +1012,17 @@ impl Page {
         Ok(())
     }
 
+    /// Control blocking network on continue fetch request paused.
+    pub async fn set_blocked_networking(&self, blocked: bool) -> Result<()> {
+        self.inner
+            .sender()
+            .clone()
+            .send(TargetMessage::BlockNetwork(blocked))
+            .await?;
+
+        Ok(())
+    }
+
     /// Returns the current url of the page
     pub async fn url(&self) -> Result<Option<String>> {
         let (tx, rx) = oneshot_channel();

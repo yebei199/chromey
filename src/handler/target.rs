@@ -749,6 +749,9 @@ impl Target {
                         TargetMessage::Authenticate(credentials) => {
                             self.network_manager.authenticate(credentials);
                         }
+                        TargetMessage::BlockNetwork(blocked) => {
+                            self.network_manager.set_block_all(blocked);
+                        }
                     }
                 }
             }
@@ -1058,4 +1061,6 @@ pub enum TargetMessage {
     /// Get the `ExecutionContext` if available
     GetExecutionContext(GetExecutionContext),
     Authenticate(Credentials),
+    /// Set block/unblocked networking
+    BlockNetwork(bool),
 }
