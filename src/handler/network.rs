@@ -62,6 +62,8 @@ lazy_static! {
         "es2015.",
         "es2020.",
         "webpack",
+        "captcha",
+        "client",
         "/cdn-cgi/challenge-platform/",
         "/wp-content/js/",  // Covers Wordpress content
         // Verified 3rd parties for request
@@ -72,6 +74,7 @@ lazy_static! {
         "https://google.com/recaptcha/api.js",
         "https://captcha.px-cloud.net/",
         "https://cdn.auth0.com/js/lock/",
+        "https://captcha.gtimg.com",
         "https://cdn.auth0.com/client",
         "https://js.stripe.com/",
         "https://cdn.prod.website-files.com/", // webflow cdn scripts
@@ -106,7 +109,6 @@ lazy_static! {
         "https://www.gstatic.com/recaptcha/",
         "https://www.google.com/recaptcha/api2/",
         "https://www.recaptcha.net/recaptcha/",
-        "https://www.recaptcha.net/recaptcha/api2/",
         "https://js.hcaptcha.com/1/api.js",
         "https://hcaptcha.com/1/api.js",
         "https://js.datadome.co/tags.js",
@@ -218,6 +220,89 @@ lazy_static! {
         .pattern(RequestPattern::builder().url_pattern("*").request_stage(RequestStage::Request).build())
         .build()
     };
+}
+
+#[derive(Debug, Clone, Default)]
+struct SiteKeyword {
+    // lowercased ASCII keyword, e.g. b"gelcom"
+    kw_lower: Box<[u8]>,
+    // lowercased ASCII "/kw/" pattern, e.g. b"/gelcom/"
+    kw_slash: Box<[u8]>,
+}
+
+impl SiteKeyword {
+    #[inline]
+    fn new_from_base_domain(base: &str) -> Option<Self> {
+        let s = base.trim().trim_matches('.');
+        if s.is_empty() {
+            return None;
+        }
+
+        let kw = s.split('.').next().unwrap_or(s).trim();
+        if kw.len() < 4 {
+            return None;
+        }
+
+        // Precompute lowercase bytes once.
+        let mut kw_lower = Vec::with_capacity(kw.len());
+        for &b in kw.as_bytes() {
+            kw_lower.push(b.to_ascii_lowercase());
+        }
+
+        // Build "/kw/" once.
+        let mut kw_slash = Vec::with_capacity(kw_lower.len() + 2);
+        kw_slash.push(b'/');
+        kw_slash.extend_from_slice(&kw_lower);
+        kw_slash.push(b'/');
+
+        Some(Self {
+            kw_lower: kw_lower.into_boxed_slice(),
+            kw_slash: kw_slash.into_boxed_slice(),
+        })
+    }
+}
+
+/// ASCII-only case-insensitive "contains" without allocations.
+/// `needle_lower` must be lowercase ASCII bytes.
+#[inline]
+fn contains_ascii_ci(haystack: &[u8], needle_lower: &[u8]) -> bool {
+    let n = needle_lower.len();
+    if n == 0 {
+        return true;
+    }
+    if haystack.len() < n {
+        return false;
+    }
+
+    // Naive scan but tight + branch-light; fast enough for short needles (brand keywords).
+    // Compare by lowercasing each haystack byte on-the-fly.
+    let last = haystack.len() - n;
+    let first = needle_lower[0];
+
+    let mut i = 0usize;
+    while i <= last {
+        // quick skip until first byte matches (case-insensitive)
+        let b0 = haystack[i].to_ascii_lowercase();
+        if b0 != first {
+            i += 1;
+            continue;
+        }
+
+        // verify full needle
+        let mut j = 1usize;
+        while j < n {
+            if haystack[i + j].to_ascii_lowercase() != needle_lower[j] {
+                break;
+            }
+            j += 1;
+        }
+        if j == n {
+            return true;
+        }
+
+        i += 1;
+    }
+    false
 }
 
 /// Determine if a redirect is true.
@@ -340,6 +425,9 @@ pub struct NetworkManager {
     whitelist_patterns: Vec<String>,
     /// Compiled matcher for whitelist_patterns (rebuilt when patterns change).
     whitelist_matcher: Option<AhoCorasick>,
+    /// Cached site keyword derived from `document_target_domain` for fast related-3p allow.
+    /// Computed once per navigation in `set_page_url()` and kept in sync as target domain changes.
+    site_keyword: Option<SiteKeyword>,
 }
 
 impl NetworkManager {
@@ -373,11 +461,36 @@ impl NetworkManager {
             whitelist_patterns: Vec::new(),
             whitelist_matcher: None,
             max_bytes_allowed: None,
+            site_keyword: None,
             #[cfg(feature = "_cache")]
             cache_site_key: None,
             #[cfg(feature = "_cache")]
             cache_policy: None,
         }
+    }
+
+    /// Fast allow for 3rd-party URLs that embed the current site's keyword.
+    #[inline]
+    fn is_related_3rd_party_by_keyword_fast(&self, url: &str) -> bool {
+        let Some(kw) = self.site_keyword.as_ref() else {
+            return false;
+        };
+
+        let Some((host, rest)) = host_and_rest(url) else {
+            return false;
+        };
+
+        let host_b = host.as_bytes();
+        if contains_ascii_ci(host_b, &kw.kw_lower) {
+            return true;
+        }
+
+        let rest_b = rest.as_bytes();
+        if contains_ascii_ci(rest_b, &kw.kw_slash) {
+            return true;
+        }
+
+        false
     }
 
     /// Replace the whitelist patterns (compiled once).
@@ -806,7 +919,7 @@ impl NetworkManager {
         self.push_cdp_request(params);
     }
 
-    /// On fetch requesdt paused interception.
+    /// On fetch request paused interception.
     #[inline]
     pub fn on_fetch_request_paused(&mut self, event: &EventRequestPaused) {
         if self.user_request_interception_enabled && self.protocol_request_interception_enabled {
@@ -874,6 +987,7 @@ impl NetworkManager {
 
         // Ignore embedded scripts when only_html or ignore_visuals is set.
         if !skip_networking
+            && self.block_javascript
             && (self.only_html || self.ignore_visuals)
             && (javascript_resource || document_resource)
         {
@@ -912,6 +1026,14 @@ impl NetworkManager {
 
         // check if the url is in the whitelist.
         if skip_networking && self.is_whitelisted(current_url) {
+            skip_networking = false;
+        }
+
+        // 3rd party match
+        if skip_networking
+            && (javascript_resource || *resource_type == ResourceType::Stylesheet)
+            && self.is_related_3rd_party_by_keyword_fast(current_url)
+        {
             skip_networking = false;
         }
 
@@ -984,6 +1106,8 @@ impl NetworkManager {
 
         self.document_target_domain = host_base.to_string();
         self.document_target_url = page_target_url;
+        // 3rd party guard.
+        self.site_keyword = SiteKeyword::new_from_base_domain(&self.document_target_domain);
     }
 
     /// Clear the initial target domain on every navigation.
@@ -991,6 +1115,7 @@ impl NetworkManager {
         self.document_reload_tracker = 0;
         self.document_target_url = Default::default();
         self.document_target_domain = Default::default();
+        self.site_keyword = None;
     }
 
     /// Handles:
@@ -1059,6 +1184,8 @@ impl NetworkManager {
             self.document_target_domain = host_and_rest(&self.document_target_url)
                 .map(|(h, _)| base_domain_from_host(h).to_string())
                 .unwrap_or_default();
+
+            self.site_keyword = SiteKeyword::new_from_base_domain(&self.document_target_domain);
         }
 
         let current_url_cow = match replacer {
@@ -1433,5 +1560,27 @@ mod tests {
         assert!(ALLOWED_MATCHER_3RD_PARTY
             .is_match("https://www.google.com/recaptcha/api.js?render=explicit"));
         assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://code.jquery.com/jquery-3.7.1.min.js"));
+    }
+
+    #[test]
+    fn test_related_3rd_party_keyword_fast_gelcom() {
+        let mut nm = NetworkManager::new(false, Duration::from_secs(30));
+        nm.set_page_url("https://www.gelcom.de/".to_string());
+
+        // path embeds /gelcom/
+        let a = "https://tags-eu.tiqcdn.com/utag/gelcom/oneshop-eu/prod/utag.js";
+        assert!(nm.is_related_3rd_party_by_keyword_fast(a));
+
+        // host embeds gelcom
+        let b = "https://www2.gelcom.de/forward/ablyft-cdn/s/55651514.js";
+        assert!(nm.is_related_3rd_party_by_keyword_fast(b));
+
+        // host embeds gelcom
+        let c = "https://ebs01.gelcom.de/resout/legalnote-replacer/legalnote-replacer-oneshop.js";
+        assert!(nm.is_related_3rd_party_by_keyword_fast(c));
+
+        // unrelated
+        let d = "https://static.cloudflareinsights.com/beacon.min.js";
+        assert!(!nm.is_related_3rd_party_by_keyword_fast(d));
     }
 }
