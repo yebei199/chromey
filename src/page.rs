@@ -1023,6 +1023,17 @@ impl Page {
         Ok(())
     }
 
+    /// Set the internal paused fetch interception control. Use this if you manually set your own listeners.
+    pub async fn set_request_interception(&self, enabled: bool) -> Result<()> {
+        self.inner
+            .sender()
+            .clone()
+            .send(TargetMessage::EnableInterception(enabled))
+            .await?;
+
+        Ok(())
+    }
+
     /// Returns the current url of the page
     pub async fn url(&self) -> Result<Option<String>> {
         let (tx, rx) = oneshot_channel();

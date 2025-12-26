@@ -752,6 +752,10 @@ impl Target {
                         TargetMessage::BlockNetwork(blocked) => {
                             self.network_manager.set_block_all(blocked);
                         }
+                        TargetMessage::EnableInterception(enabled) => {
+                            // if interception is enabled disable the user facing handling.
+                            self.network_manager.user_request_interception_enabled = !enabled;
+                        }
                     }
                 }
             }
@@ -1063,4 +1067,6 @@ pub enum TargetMessage {
     Authenticate(Credentials),
     /// Set block/unblocked networking
     BlockNetwork(bool),
+    /// Enable/Disable internal request paused interception
+    EnableInterception(bool),
 }
