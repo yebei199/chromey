@@ -2260,11 +2260,9 @@ impl Page {
     }
 
     /// Enables Fetch.
-    pub async fn enable_fetch(
-        &self,
-        cmd: impl Into<browser_protocol::fetch::EnableParams>,
-    ) -> Result<&Self> {
-        self.send_command(cmd.into()).await?;
+    pub async fn enable_fetch(&self) -> Result<&Self> {
+        self.send_command(browser_protocol::fetch::EnableParams::default())
+            .await?;
         Ok(self)
     }
 
@@ -3073,11 +3071,13 @@ impl Page {
             )
             .build()
         {
-            call.execution_context_id = self
-                .inner
-                .execution_context_for_world(None, DOMWorldKind::Secondary)
-                .await?;
-            self.evaluate_function(call).await?;
+            if let Ok(frame_id) = self.mainframe().await {
+                call.execution_context_id = self
+                    .inner
+                    .execution_context_for_world(frame_id, DOMWorldKind::Secondary)
+                    .await?;
+                self.evaluate_function(call).await?;
+            }
         }
         // relying that document.open() will reset frame lifecycle with "init"
         // lifecycle event. @see https://crrev.com/608658
