@@ -165,8 +165,12 @@ impl Target {
             network_manager.set_extra_headers(headers.clone());
         }
 
-        if let Some(white_list) = &config.whitelist_patterns {
-            network_manager.set_whitelist_patterns(white_list.clone());
+        if let Some(whitelist) = &config.whitelist_patterns {
+            network_manager.set_whitelist_patterns(whitelist.clone());
+        }
+
+        if let Some(blacklist) = &config.blacklist_patterns {
+            network_manager.set_blacklist_patterns(blacklist);
         }
 
         network_manager.ignore_visuals = config.ignore_visuals;
@@ -867,6 +871,8 @@ pub struct TargetConfig {
     pub max_bytes_allowed: Option<u64>,
     /// Whitelist patterns to allow through the network.
     pub whitelist_patterns: Option<Vec<String>>,
+    /// Blacklist patterns to black through the network.
+    pub blacklist_patterns: Option<Vec<String>>,
 }
 
 impl Default for TargetConfig {
@@ -887,6 +893,7 @@ impl Default for TargetConfig {
             intercept_manager: NetworkInterceptManager::Unknown,
             max_bytes_allowed: None,
             whitelist_patterns: None,
+            blacklist_patterns: None,
         }
     }
 }

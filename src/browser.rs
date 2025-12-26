@@ -173,6 +173,7 @@ impl Browser {
             intercept_manager: config.intercept_manager,
             max_bytes_allowed: config.max_bytes_allowed,
             whitelist_patterns: config.whitelist_patterns.clone(),
+            blacklist_patterns: config.blacklist_patterns.clone(),
             ..Default::default()
         };
 
@@ -261,6 +262,7 @@ impl Browser {
             intercept_manager: config.intercept_manager,
             max_bytes_allowed: config.max_bytes_allowed,
             whitelist_patterns: config.whitelist_patterns.clone(),
+            blacklist_patterns: config.blacklist_patterns.clone(),
         };
 
         let fut = Handler::new(conn, rx, handler_config);
@@ -861,6 +863,8 @@ pub struct BrowserConfig {
     pub max_bytes_allowed: Option<u64>,
     /// Whitelist patterns to allow through the network.
     pub whitelist_patterns: Option<Vec<String>>,
+    /// Blacklist patterns to block through the network.
+    pub blacklist_patterns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -924,6 +928,8 @@ pub struct BrowserConfigBuilder {
     max_bytes_allowed: Option<u64>,
     /// Whitelist patterns to allow through the network.
     whitelist_patterns: Option<Vec<String>>,
+    /// Blacklist patterns to block through the network.
+    blacklist_patterns: Option<Vec<String>>,
 }
 
 impl BrowserConfig {
@@ -973,6 +979,7 @@ impl Default for BrowserConfigBuilder {
             intercept_manager: NetworkInterceptManager::Unknown,
             max_bytes_allowed: None,
             whitelist_patterns: None,
+            blacklist_patterns: None,
         }
     }
 }
@@ -1150,9 +1157,15 @@ impl BrowserConfigBuilder {
         self
     }
 
-    /// Set whitelist patterns to allow through network interception ignoring.
+    /// Set whitelist patterns to allow through network interception allowing.
     pub fn set_whitelist_patterns(mut self, whitelist_patterns: Option<Vec<String>>) -> Self {
         self.whitelist_patterns = whitelist_patterns;
+        self
+    }
+
+    /// Set blacklist patterns to block through network interception.
+    pub fn set_blacklist_patterns(mut self, blacklist_patterns: Option<Vec<String>>) -> Self {
+        self.blacklist_patterns = blacklist_patterns;
         self
     }
 
@@ -1193,6 +1206,7 @@ impl BrowserConfigBuilder {
             service_worker_enabled: self.service_worker_enabled,
             max_bytes_allowed: self.max_bytes_allowed,
             whitelist_patterns: self.whitelist_patterns,
+            blacklist_patterns: self.blacklist_patterns,
         })
     }
 }

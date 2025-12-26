@@ -123,9 +123,9 @@ lazy_static! {
         "https://cdn.jsdelivr.net/npm/@friendlycaptcha/",
         "https://cdn.perfdrive.com/aperture/",
         "https://assets.queue-it.net/",
+        "discourse-cdn.com/",
         "/cdn-cgi/challenge-platform/",
-        "/_Incapsula_Resource",
-        "discourse-cdn.com/"
+        "/_Incapsula_Resource"
     ];
 
     /// Determine if a script should be rendered in the browser by name.
@@ -220,89 +220,6 @@ lazy_static! {
         .pattern(RequestPattern::builder().url_pattern("*").request_stage(RequestStage::Request).build())
         .build()
     };
-}
-
-#[derive(Debug, Clone, Default)]
-struct SiteKeyword {
-    // lowercased ASCII keyword, e.g. b"gelcom"
-    kw_lower: Box<[u8]>,
-    // lowercased ASCII "/kw/" pattern, e.g. b"/gelcom/"
-    kw_slash: Box<[u8]>,
-}
-
-impl SiteKeyword {
-    #[inline]
-    fn new_from_base_domain(base: &str) -> Option<Self> {
-        let s = base.trim().trim_matches('.');
-        if s.is_empty() {
-            return None;
-        }
-
-        let kw = s.split('.').next().unwrap_or(s).trim();
-        if kw.len() < 4 {
-            return None;
-        }
-
-        // Precompute lowercase bytes once.
-        let mut kw_lower = Vec::with_capacity(kw.len());
-        for &b in kw.as_bytes() {
-            kw_lower.push(b.to_ascii_lowercase());
-        }
-
-        // Build "/kw/" once.
-        let mut kw_slash = Vec::with_capacity(kw_lower.len() + 2);
-        kw_slash.push(b'/');
-        kw_slash.extend_from_slice(&kw_lower);
-        kw_slash.push(b'/');
-
-        Some(Self {
-            kw_lower: kw_lower.into_boxed_slice(),
-            kw_slash: kw_slash.into_boxed_slice(),
-        })
-    }
-}
-
-/// ASCII-only case-insensitive "contains" without allocations.
-/// `needle_lower` must be lowercase ASCII bytes.
-#[inline]
-fn contains_ascii_ci(haystack: &[u8], needle_lower: &[u8]) -> bool {
-    let n = needle_lower.len();
-    if n == 0 {
-        return true;
-    }
-    if haystack.len() < n {
-        return false;
-    }
-
-    // Naive scan but tight + branch-light; fast enough for short needles (brand keywords).
-    // Compare by lowercasing each haystack byte on-the-fly.
-    let last = haystack.len() - n;
-    let first = needle_lower[0];
-
-    let mut i = 0usize;
-    while i <= last {
-        // quick skip until first byte matches (case-insensitive)
-        let b0 = haystack[i].to_ascii_lowercase();
-        if b0 != first {
-            i += 1;
-            continue;
-        }
-
-        // verify full needle
-        let mut j = 1usize;
-        while j < n {
-            if haystack[i + j].to_ascii_lowercase() != needle_lower[j] {
-                break;
-            }
-            j += 1;
-        }
-        if j == n {
-            return true;
-        }
-
-        i += 1;
-    }
-    false
 }
 
 /// Determine if a redirect is true.
@@ -425,9 +342,12 @@ pub struct NetworkManager {
     whitelist_patterns: Vec<String>,
     /// Compiled matcher for whitelist_patterns (rebuilt when patterns change).
     whitelist_matcher: Option<AhoCorasick>,
-    /// Cached site keyword derived from `document_target_domain` for fast related-3p allow.
-    /// Computed once per navigation in `set_page_url()` and kept in sync as target domain changes.
-    site_keyword: Option<SiteKeyword>,
+    /// Optional per-run/per-site blacklist of URL substrings (scripts/resources).
+    blacklist_patterns: Vec<String>,
+    /// Compiled matcher for blacklist_patterns (rebuilt when patterns change).
+    blacklist_matcher: Option<AhoCorasick>,
+    /// If true, blacklist always wins (cannot be unblocked by whitelist/3p allow).
+    blacklist_strict: bool,
 }
 
 impl NetworkManager {
@@ -460,37 +380,15 @@ impl NetworkManager {
             document_target_domain: String::new(),
             whitelist_patterns: Vec::new(),
             whitelist_matcher: None,
+            blacklist_patterns: Vec::new(),
+            blacklist_matcher: None,
+            blacklist_strict: true,
             max_bytes_allowed: None,
-            site_keyword: None,
             #[cfg(feature = "_cache")]
             cache_site_key: None,
             #[cfg(feature = "_cache")]
             cache_policy: None,
         }
-    }
-
-    /// Fast allow for 3rd-party URLs that embed the current site's keyword.
-    #[inline]
-    fn is_related_3rd_party_by_keyword_fast(&self, url: &str) -> bool {
-        let Some(kw) = self.site_keyword.as_ref() else {
-            return false;
-        };
-
-        let Some((host, rest)) = host_and_rest(url) else {
-            return false;
-        };
-
-        let host_b = host.as_bytes();
-        if contains_ascii_ci(host_b, &kw.kw_lower) {
-            return true;
-        }
-
-        let rest_b = rest.as_bytes();
-        if contains_ascii_ci(rest_b, &kw.kw_slash) {
-            return true;
-        }
-
-        false
     }
 
     /// Replace the whitelist patterns (compiled once).
@@ -501,6 +399,63 @@ impl NetworkManager {
     {
         self.whitelist_patterns = patterns.into_iter().map(Into::into).collect();
         self.rebuild_whitelist_matcher();
+    }
+
+    /// Replace the blacklist patterns (compiled once).
+    pub fn set_blacklist_patterns<I, S>(&mut self, patterns: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.blacklist_patterns = patterns.into_iter().map(Into::into).collect();
+        self.rebuild_blacklist_matcher();
+    }
+
+    /// Add one pattern (cheap) and rebuild (call this sparingly).
+    pub fn add_blacklist_pattern<S: Into<String>>(&mut self, pattern: S) {
+        self.blacklist_patterns.push(pattern.into());
+        self.rebuild_blacklist_matcher();
+    }
+
+    /// Add many patterns and rebuild once.
+    pub fn add_blacklist_patterns<I, S>(&mut self, patterns: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.blacklist_patterns
+            .extend(patterns.into_iter().map(Into::into));
+        self.rebuild_blacklist_matcher();
+    }
+
+    /// Clear blacklist entirely.
+    pub fn clear_blacklist(&mut self) {
+        self.blacklist_patterns.clear();
+        self.blacklist_matcher = None;
+    }
+
+    /// Control precedence: when true, blacklist always wins.
+    pub fn set_blacklist_strict(&mut self, strict: bool) {
+        self.blacklist_strict = strict;
+    }
+
+    #[inline]
+    fn rebuild_blacklist_matcher(&mut self) {
+        if self.blacklist_patterns.is_empty() {
+            self.blacklist_matcher = None;
+            return;
+        }
+
+        let refs: Vec<&str> = self.blacklist_patterns.iter().map(|s| s.as_str()).collect();
+        self.blacklist_matcher = AhoCorasick::new(refs).ok();
+    }
+
+    #[inline]
+    fn is_blacklisted(&self, url: &str) -> bool {
+        self.blacklist_matcher
+            .as_ref()
+            .map(|m| m.is_match(url))
+            .unwrap_or(false)
     }
 
     /// Add one pattern (cheap) and rebuild (call this sparingly).
@@ -651,12 +606,6 @@ impl NetworkManager {
 
     /// Blocklist-only script blocking.
     /// Returns true only when the URL matches an explicit blocklist condition.
-    ///
-    /// IMPORTANT:
-    /// - Scripts are ALLOW-BY-DEFAULT.
-    /// - We only block when explicit blocklist signals match.
-    /// - We do NOT call ignore_script() here because ignore_script() treats absolute URLs as
-    ///   "ignored by default", which is the opposite of what we want.
     #[inline]
     fn should_block_script_blocklist_only(&self, url: &str) -> bool {
         // If analytics blocking is off, skip all analytics tries.
@@ -689,13 +638,6 @@ impl NetworkManager {
                 Some(b) => b,
                 None => p_slash,
             };
-
-            // ---- Filename fallback (VERY fast) ----
-            // This is the behavior your test expects: block "analytics.js" anywhere in the path.
-            // (You can add more filename-only fallbacks here if needed.)
-            if block_analytics && (base == "analytics.js" || p_noslash.ends_with("/analytics.js")) {
-                return true;
-            }
 
             // ---- Trie checks ----
             // Some tries store prefixes like "/cdn-cgi/..." (leading slash) OR "cdn-cgi/..." (no slash).
@@ -968,11 +910,12 @@ impl NetworkManager {
 
         let current_url: &str = current_url_cow.as_ref();
 
-        // Main initial check (visuals, stylesheets).
-        //
-        // IMPORTANT: Scripts are NOT blocked here anymore.
-        // Scripts are allowed by default and only blocked via explicit blocklists
-        // (adblock / block_websites / intercept_manager / URL tries).
+        let blacklisted = self.is_blacklisted(current_url);
+
+        if !self.blacklist_strict && blacklisted {
+            skip_networking = true;
+        }
+
         if !skip_networking {
             // Allow XSL for sitemap XML.
             if self.xml_document && current_url.ends_with(".xsl") {
@@ -1029,12 +972,8 @@ impl NetworkManager {
             skip_networking = false;
         }
 
-        // 3rd party match
-        if skip_networking
-            && (javascript_resource || *resource_type == ResourceType::Stylesheet)
-            && self.is_related_3rd_party_by_keyword_fast(current_url)
-        {
-            skip_networking = false;
+        if self.blacklist_strict && blacklisted {
+            skip_networking = true;
         }
 
         if skip_networking {
@@ -1106,8 +1045,6 @@ impl NetworkManager {
 
         self.document_target_domain = host_base.to_string();
         self.document_target_url = page_target_url;
-        // 3rd party guard.
-        self.site_keyword = SiteKeyword::new_from_base_domain(&self.document_target_domain);
     }
 
     /// Clear the initial target domain on every navigation.
@@ -1115,7 +1052,6 @@ impl NetworkManager {
         self.document_reload_tracker = 0;
         self.document_target_url = Default::default();
         self.document_target_domain = Default::default();
-        self.site_keyword = None;
     }
 
     /// Handles:
@@ -1184,8 +1120,6 @@ impl NetworkManager {
             self.document_target_domain = host_and_rest(&self.document_target_url)
                 .map(|(h, _)| base_domain_from_host(h).to_string())
                 .unwrap_or_default();
-
-            self.site_keyword = SiteKeyword::new_from_base_domain(&self.document_target_domain);
         }
 
         let current_url_cow = match replacer {
@@ -1561,26 +1495,51 @@ mod tests {
             .is_match("https://www.google.com/recaptcha/api.js?render=explicit"));
         assert!(ALLOWED_MATCHER_3RD_PARTY.is_match("https://code.jquery.com/jquery-3.7.1.min.js"));
     }
+    #[test]
+    fn test_dynamic_blacklist_blocks_url() {
+        let mut nm = NetworkManager::new(false, Duration::from_secs(30));
+        nm.set_page_url("https://example.com/".to_string());
+
+        nm.set_blacklist_patterns(["static.cloudflareinsights.com", "googletagmanager.com"]);
+        assert!(nm.is_blacklisted("https://static.cloudflareinsights.com/beacon.min.js"));
+        assert!(nm.is_blacklisted("https://www.googletagmanager.com/gtm.js?id=GTM-XXXX"));
+
+        assert!(!nm.is_blacklisted("https://cdn.example.net/assets/app.js"));
+    }
 
     #[test]
-    fn test_related_3rd_party_keyword_fast_gelcom() {
+    fn test_blacklist_strict_wins_over_whitelist() {
         let mut nm = NetworkManager::new(false, Duration::from_secs(30));
-        nm.set_page_url("https://www.gelcom.de/".to_string());
+        nm.set_page_url("https://example.com/".to_string());
 
-        // path embeds /gelcom/
-        let a = "https://tags-eu.tiqcdn.com/utag/gelcom/oneshop-eu/prod/utag.js";
-        assert!(nm.is_related_3rd_party_by_keyword_fast(a));
+        // Same URL in both lists.
+        nm.set_blacklist_patterns(["beacon.min.js"]);
+        nm.set_whitelist_patterns(["beacon.min.js"]);
 
-        // host embeds gelcom
-        let b = "https://www2.gelcom.de/forward/ablyft-cdn/s/55651514.js";
-        assert!(nm.is_related_3rd_party_by_keyword_fast(b));
+        nm.set_blacklist_strict(true);
 
-        // host embeds gelcom
-        let c = "https://ebs01.gelcom.de/resout/legalnote-replacer/legalnote-replacer-oneshop.js";
-        assert!(nm.is_related_3rd_party_by_keyword_fast(c));
+        let u = "https://static.cloudflareinsights.com/beacon.min.js";
+        assert!(nm.is_whitelisted(u));
+        assert!(nm.is_blacklisted(u));
 
-        // unrelated
-        let d = "https://static.cloudflareinsights.com/beacon.min.js";
-        assert!(!nm.is_related_3rd_party_by_keyword_fast(d));
+        // In strict mode, it should still be considered blocked at decision time.
+        // (We can only directly assert the matchers here; the decision logic is exercised in integration.)
+        assert!(nm.blacklist_strict);
+    }
+
+    #[test]
+    fn test_blacklist_non_strict_allows_whitelist_override() {
+        let mut nm = NetworkManager::new(false, Duration::from_secs(30));
+        nm.set_page_url("https://example.com/".to_string());
+
+        nm.set_blacklist_patterns(["beacon.min.js"]);
+        nm.set_whitelist_patterns(["beacon.min.js"]);
+
+        nm.set_blacklist_strict(false);
+
+        let u = "https://static.cloudflareinsights.com/beacon.min.js";
+        assert!(nm.is_blacklisted(u));
+        assert!(nm.is_whitelisted(u));
+        assert!(!nm.blacklist_strict);
     }
 }

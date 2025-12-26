@@ -472,6 +472,7 @@ impl Handler {
                 intercept_manager: self.config.intercept_manager,
                 max_bytes_allowed: self.config.max_bytes_allowed,
                 whitelist_patterns: self.config.whitelist_patterns.clone(),
+                blacklist_patterns: self.config.blacklist_patterns.clone(),
             },
             browser_ctx,
         );
@@ -779,6 +780,8 @@ pub struct HandlerConfig {
     pub max_bytes_allowed: Option<u64>,
     /// Optional per-run/per-site whitelist of URL substrings (scripts/resources).
     pub whitelist_patterns: Option<Vec<String>>,
+    /// Optional per-run/per-site blacklist of URL substrings (scripts/resources).
+    pub blacklist_patterns: Option<Vec<String>>,
 }
 
 impl Default for HandlerConfig {
@@ -802,6 +805,7 @@ impl Default for HandlerConfig {
             intercept_manager: NetworkInterceptManager::Unknown,
             max_bytes_allowed: None,
             whitelist_patterns: None,
+            blacklist_patterns: None,
         }
     }
 }
