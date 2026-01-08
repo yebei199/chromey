@@ -1206,11 +1206,11 @@ impl Page {
             set_emulation_agent_override.user_agent_metadata = default_params1.user_agent_metadata;
 
             tokio::try_join!(
-                self.send_command(default_params),
-                self.send_command(set_emulation_agent_override)
+                self.execute(default_params),
+                self.execute(set_emulation_agent_override)
             )?;
         } else {
-            self.send_command(default_params).await?;
+            self.execute(default_params).await?;
         }
 
         Ok(self)
