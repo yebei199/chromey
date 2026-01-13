@@ -21,3 +21,15 @@ pub(crate) fn block_xhr(u: &str) -> bool {
 pub(crate) fn block_xhr(_u: &str) -> bool {
     false
 }
+
+/// Firewall protection ads. This does nothing without the [firewall] flag.
+#[cfg(feature = "firewall")]
+pub(crate) fn block_ads(u: &str) -> bool {
+    spider_firewall::is_ad_website_url_clean(&u)
+}
+
+/// Firewall protection ads. This does nothing without the [firewall] flag.
+#[cfg(not(feature = "firewall"))]
+pub(crate) fn block_ads(_u: &str) -> bool {
+    false
+}

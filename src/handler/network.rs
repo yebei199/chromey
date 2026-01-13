@@ -769,15 +769,20 @@ impl NetworkManager {
         if skip_networking {
             true
         } else {
-            self.detect_ad(event)
+            block_ads(&event.request.url) || self.detect_ad(event)
         }
     }
 
     /// When adblock feature is disabled, this is a no-op.
     #[cfg(not(feature = "adblock"))]
     #[inline]
-    fn detect_ad_if_enabled(&mut self, _event: &EventRequestPaused, skip_networking: bool) -> bool {
-        skip_networking
+    fn detect_ad_if_enabled(&mut self, event: &EventRequestPaused, skip_networking: bool) -> bool {
+        use crate::handler::blockers::block_websites::block_ads;
+        if skip_networking {
+            true
+        } else {
+            block_ads(&event.request.url)
+        }
     }
 
     #[inline]
@@ -925,7 +930,6 @@ impl NetworkManager {
             }
         }
 
-        // Ad blocking (only active when feature = "adblock").
         skip_networking = self.detect_ad_if_enabled(event, skip_networking);
 
         // Ignore embedded scripts when only_html or ignore_visuals is set.
