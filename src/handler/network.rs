@@ -184,8 +184,6 @@ lazy_static! {
     /// Ignore the resources for visual content types.
     pub static ref IGNORE_NETWORKING_RESOURCE_MAP: phf::Set<&'static str> = phf::phf_set! {
         "CspViolationReport",
-        "Manifest",
-        "Other",
         "Prefetch",
         "Ping",
     };
