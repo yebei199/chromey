@@ -184,7 +184,6 @@ lazy_static! {
     /// Ignore the resources for visual content types.
     pub static ref IGNORE_NETWORKING_RESOURCE_MAP: phf::Set<&'static str> = phf::phf_set! {
         "CspViolationReport",
-        "Prefetch",
         "Ping",
     };
 
@@ -322,6 +321,8 @@ pub struct NetworkManager {
     pub block_javascript: bool,
     /// Block analytics from rendering
     pub block_analytics: bool,
+    /// Block pre-fetch request
+    pub block_prefetch: bool,
     /// Only html from loading.
     pub only_html: bool,
     /// Is xml document?
@@ -375,6 +376,7 @@ impl NetworkManager {
             ignore_visuals: false,
             block_javascript: false,
             block_stylesheets: false,
+            block_prefetch: true,
             block_analytics: true,
             only_html: false,
             xml_document: false,
@@ -877,8 +879,6 @@ impl NetworkManager {
             return;
         }
 
-        let resource_type = &event.resource_type;
-
         if self.block_all {
             tracing::debug!(
                 "Blocked (block_all): {:?} - {}",
@@ -900,13 +900,18 @@ impl NetworkManager {
         }
 
         // From here on, we handle the full decision tree.
-        let javascript_resource = *resource_type == ResourceType::Script;
-        let document_resource = *resource_type == ResourceType::Document;
-        let network_resource = !document_resource && crate::utils::is_data_resource(resource_type);
+        let javascript_resource = event.resource_type == ResourceType::Script;
+        let document_resource = event.resource_type == ResourceType::Document;
+        let network_resource =
+            !document_resource && crate::utils::is_data_resource(&event.resource_type);
 
         // Start with static / cheap skip checks.
         let mut skip_networking =
-            self.block_all || IGNORE_NETWORKING_RESOURCE_MAP.contains(resource_type.as_ref());
+            self.block_all || IGNORE_NETWORKING_RESOURCE_MAP.contains(event.resource_type.as_ref());
+
+        if event.resource_type == ResourceType::Prefetch && !self.block_prefetch {
+            skip_networking = true;
+        }
 
         // Also short-circuit if we've reloaded this document too many times.
         if !skip_networking {
@@ -930,7 +935,7 @@ impl NetworkManager {
             if self.xml_document && current_url.ends_with(".xsl") {
                 skip_networking = false;
             } else {
-                skip_networking = self.should_skip_for_visuals_and_basic(resource_type);
+                skip_networking = self.should_skip_for_visuals_and_basic(&event.resource_type);
             }
         }
 
@@ -985,7 +990,7 @@ impl NetworkManager {
         }
 
         if skip_networking {
-            tracing::debug!("Blocked: {:?} - {}", resource_type, current_url);
+            tracing::debug!("Blocked: {:?} - {}", event.resource_type, current_url);
             self.fulfill_request_empty_200(&event.request_id);
         } else {
             #[cfg(feature = "_cache")]
@@ -1016,7 +1021,7 @@ impl NetworkManager {
             }
 
             // check our frame cache for the run.
-            tracing::debug!("Allowed: {:?} - {}", resource_type, current_url);
+            tracing::debug!("Allowed: {:?} - {}", event.resource_type, current_url);
             self.continue_request_with_url(
                 &event.request_id,
                 if had_replacer {

@@ -467,6 +467,7 @@ impl Handler {
                 ignore_stylesheets: self.config.ignore_stylesheets,
                 ignore_javascript: self.config.ignore_javascript,
                 ignore_analytics: self.config.ignore_analytics,
+                ignore_prefetch: self.config.ignore_prefetch,
                 extra_headers: self.config.extra_headers.clone(),
                 only_html: self.config.only_html && self.config.created_first_target,
                 intercept_manager: self.config.intercept_manager,
@@ -766,6 +767,8 @@ pub struct HandlerConfig {
     pub ignore_javascript: bool,
     /// Whether to ignore analytics.
     pub ignore_analytics: bool,
+    /// Ignore prefetch request. Defaults to true.
+    pub ignore_prefetch: bool,
     /// Whether to ignore ads.
     pub ignore_ads: bool,
     /// Extra headers.
@@ -799,6 +802,7 @@ impl Default for HandlerConfig {
             ignore_ads: false,
             ignore_javascript: false,
             ignore_analytics: true,
+            ignore_prefetch: true,
             only_html: false,
             extra_headers: Default::default(),
             created_first_target: false,

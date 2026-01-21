@@ -166,6 +166,7 @@ impl Browser {
             ignore_stylesheets: config.ignore_stylesheets,
             ignore_javascript: config.ignore_javascript,
             ignore_analytics: config.ignore_analytics,
+            ignore_prefetch: config.ignore_prefetch,
             ignore_ads: config.ignore_ads,
             extra_headers: config.extra_headers.clone(),
             only_html: config.only_html,
@@ -254,6 +255,7 @@ impl Browser {
             ignore_stylesheets: config.ignore_stylesheets,
             ignore_javascript: config.ignore_javascript,
             ignore_analytics: config.ignore_analytics,
+            ignore_prefetch: config.ignore_prefetch,
             ignore_ads: config.ignore_ads,
             extra_headers: config.extra_headers.clone(),
             only_html: config.only_html,
@@ -851,6 +853,8 @@ pub struct BrowserConfig {
     pub ignore_javascript: bool,
     /// Whether to ignore analytics/telemetry requests during interception.
     pub ignore_analytics: bool,
+    /// Ignore prefetch request.
+    pub ignore_prefetch: bool,
     /// Whether to ignore ad network requests during interception.
     pub ignore_ads: bool,
     /// Extra headers.
@@ -916,6 +920,8 @@ pub struct BrowserConfigBuilder {
     ignore_javascript: bool,
     /// Drop stylesheet (CSS) requests when interception is enabled.
     ignore_stylesheets: bool,
+    /// Ignore prefetch domains.
+    ignore_prefetch: bool,
     /// Drop analytics/telemetry requests when interception is enabled.
     ignore_analytics: bool,
     /// If `true`, limit fetching to HTML documents.
@@ -973,6 +979,7 @@ impl Default for BrowserConfigBuilder {
             ignore_javascript: false,
             ignore_analytics: false,
             ignore_stylesheets: false,
+            ignore_prefetch: true,
             only_html: false,
             extra_headers: Default::default(),
             service_worker_enabled: true,
@@ -1200,6 +1207,7 @@ impl BrowserConfigBuilder {
             ignore_javascript: self.ignore_javascript,
             ignore_analytics: self.ignore_analytics,
             ignore_stylesheets: self.ignore_stylesheets,
+            ignore_prefetch: self.ignore_prefetch,
             extra_headers: self.extra_headers,
             only_html: self.only_html,
             intercept_manager: self.intercept_manager,

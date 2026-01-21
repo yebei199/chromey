@@ -176,6 +176,8 @@ impl Target {
         network_manager.ignore_visuals = config.ignore_visuals;
         network_manager.block_javascript = config.ignore_javascript;
         network_manager.block_analytics = config.ignore_analytics;
+        network_manager.block_prefetch = config.ignore_prefetch;
+
         network_manager.block_stylesheets = config.ignore_stylesheets;
         network_manager.only_html = config.only_html;
         network_manager.intercept_manager = config.intercept_manager;
@@ -851,6 +853,8 @@ pub struct TargetConfig {
     /// If `true`, block analytics / tracking requests (e.g. Google Analytics,
     /// common tracker domains, etc.).
     pub ignore_analytics: bool,
+    /// Ignore prefetching.
+    pub ignore_prefetch: bool,
     /// If `true`, block stylesheets and related CSS resources for this target.
     /// This can reduce bandwidth when only raw HTML is needed.
     pub ignore_stylesheets: bool,
@@ -888,6 +892,7 @@ impl Default for TargetConfig {
             ignore_visuals: false,
             ignore_stylesheets: false,
             ignore_analytics: true,
+            ignore_prefetch: true,
             only_html: false,
             extra_headers: Default::default(),
             intercept_manager: NetworkInterceptManager::Unknown,
