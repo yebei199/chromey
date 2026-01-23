@@ -68,6 +68,7 @@ fn get_by_name(options: &DetectionOptions) -> Option<PathBuf> {
         ("google-chrome-unstable", options.unstable),
         ("chromium", true),
         ("chromium-browser", true),
+        ("brave", true),
         ("msedge", options.msedge),
         ("microsoft-edge", options.msedge),
         ("microsoft-edge-stable", options.msedge),
