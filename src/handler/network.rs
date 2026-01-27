@@ -1006,7 +1006,7 @@ impl NetworkManager {
                         if policy.allows_cached(&cache_policy) {
                             tracing::debug!(
                                 "Remote Cached: {:?} - {}",
-                                resource_type,
+                                &event.resource_type,
                                 &current_url
                             );
                             return self.fulfill_request_from_cache(
