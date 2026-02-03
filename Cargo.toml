@@ -1,6 +1,6 @@
 [package]
 name = "chromey"
-version = "2.37.264"
+version = "2.37.265"
 rust-version = "1.70"
 authors = ["j-mendez <jeff@spider.cloud>"]
 edition = "2021"
@@ -39,7 +39,7 @@ dunce = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 lazy_static = "1"
 phf = { version = "0.11", features = ["macros"] }
-adblock = { version = "0.9", optional = true, default-features = false, features = [
+adblock = { version = "0.12", optional = true, default-features = false, features = [
     "embedded-domain-resolver",
     "full-regex-handling",
 ] }

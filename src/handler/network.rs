@@ -1,7 +1,10 @@
 use super::blockers::{
-    block_websites::block_xhr, ignore_script_embedded, ignore_script_xhr, ignore_script_xhr_media,
+    block_websites::block_xhr,
+    ignore_script_embedded, ignore_script_xhr, ignore_script_xhr_media,
     xhr::IGNORE_XHR_ASSETS,
 };
+#[cfg(any(feature = "adblock", feature = "firewall"))]
+use super::blockers::block_websites::block_ads;
 use crate::auth::Credentials;
 #[cfg(feature = "_cache")]
 use crate::cache::BasicCachePolicy;
