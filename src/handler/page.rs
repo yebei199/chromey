@@ -41,6 +41,7 @@ use crate::handler::target::{GetExecutionContext, TargetMessage};
 use crate::handler::target_message_future::TargetMessageFuture;
 use crate::js::EvaluationResult;
 use crate::layout::{Delta, Point, ScrollBehavior};
+use crate::mouse::SmartMouse;
 use crate::page::ScreenshotParams;
 use crate::{keys, utils, ArcHttpRequest};
 
@@ -58,6 +59,7 @@ impl PageHandle {
             session_id,
             opener_id,
             sender: commands,
+            smart_mouse: SmartMouse::new(),
         };
         Self {
             rx: rx.fuse(),
@@ -80,6 +82,8 @@ pub(crate) struct PageInner {
     opener_id: Option<TargetId>,
     /// The sender for the target.
     sender: Sender<TargetMessage>,
+    /// Smart mouse with position tracking and human-like movement.
+    pub(crate) smart_mouse: SmartMouse,
 }
 
 impl PageInner {
@@ -221,8 +225,10 @@ impl PageInner {
         Ok(search_results.node_ids)
     }
 
-    /// Moves the mouse to this point (dispatches a mouseMoved event)
+    /// Moves the mouse to this point (dispatches a mouseMoved event).
+    /// Also updates the tracked mouse position.
     pub async fn move_mouse(&self, point: Point) -> Result<&Self> {
+        self.smart_mouse.set_position(point);
         self.execute(DispatchMouseEventParams::new(
             DispatchMouseEventType::MouseMoved,
             point.x,
@@ -230,6 +236,27 @@ impl PageInner {
         ))
         .await?;
         Ok(self)
+    }
+
+    /// Moves the mouse to `target` along a human-like bezier curve path,
+    /// dispatching intermediate `mouseMoved` events with natural timing.
+    pub async fn move_mouse_smooth(&self, target: Point) -> Result<&Self> {
+        let path = self.smart_mouse.path_to(target);
+        for step in &path {
+            self.execute(DispatchMouseEventParams::new(
+                DispatchMouseEventType::MouseMoved,
+                step.point.x,
+                step.point.y,
+            ))
+            .await?;
+            tokio::time::sleep(step.delay).await;
+        }
+        Ok(self)
+    }
+
+    /// Returns the current tracked mouse position.
+    pub fn mouse_position(&self) -> Point {
+        self.smart_mouse.position()
     }
 
     /// Scrolls the current page by the specified horizontal and vertical offsets.
@@ -317,7 +344,14 @@ impl PageInner {
             self.execute(cmd).await?;
         }
 
+        self.smart_mouse.set_position(point);
         Ok(self)
+    }
+
+    /// Move smoothly to `point` with human-like movement, then click.
+    pub async fn click_smooth(&self, point: Point) -> Result<&Self> {
+        self.move_mouse_smooth(point).await?;
+        self.click(point).await
     }
 
     /// Performs a mouse click event at the point's location with the amount of clicks and modifier.
@@ -400,7 +434,6 @@ impl PageInner {
             self.move_mouse(from).await?.send_command(cmd).await?;
         }
 
-        // Note: we may want to add some slight movement in between for advanced anti-bot bypassing.
         if let Ok(cmd) = cmd
             .clone()
             .x(to.x)
@@ -415,6 +448,65 @@ impl PageInner {
             .r#type(DispatchMouseEventType::MouseReleased)
             .x(to.x)
             .y(to.y)
+            .build()
+        {
+            self.send_command(cmd).await?;
+        }
+
+        self.smart_mouse.set_position(to);
+        Ok(self)
+    }
+
+    /// Performs a smooth click-and-drag: moves to `from` with a bezier path,
+    /// presses, drags along a bezier path to `to`, then releases.
+    pub async fn click_and_drag_smooth(
+        &self,
+        from: Point,
+        to: Point,
+        modifiers: impl Into<i64>,
+    ) -> Result<&Self> {
+        let modifiers = modifiers.into();
+
+        // Smooth move to the starting point
+        self.move_mouse_smooth(from).await?;
+
+        // Press at starting point
+        if let Ok(cmd) = DispatchMouseEventParams::builder()
+            .x(from.x)
+            .y(from.y)
+            .button(MouseButton::Left)
+            .click_count(1)
+            .modifiers(modifiers)
+            .r#type(DispatchMouseEventType::MousePressed)
+            .build()
+        {
+            self.send_command(cmd).await?;
+        }
+
+        // Smooth drag to destination (dispatching MouseMoved with button held)
+        let path = self.smart_mouse.path_to(to);
+        for step in &path {
+            if let Ok(cmd) = DispatchMouseEventParams::builder()
+                .x(step.point.x)
+                .y(step.point.y)
+                .button(MouseButton::Left)
+                .modifiers(modifiers)
+                .r#type(DispatchMouseEventType::MouseMoved)
+                .build()
+            {
+                self.send_command(cmd).await?;
+            }
+            tokio::time::sleep(step.delay).await;
+        }
+
+        // Release at destination
+        if let Ok(cmd) = DispatchMouseEventParams::builder()
+            .x(to.x)
+            .y(to.y)
+            .button(MouseButton::Left)
+            .click_count(1)
+            .modifiers(modifiers)
+            .r#type(DispatchMouseEventType::MouseReleased)
             .build()
         {
             self.send_command(cmd).await?;

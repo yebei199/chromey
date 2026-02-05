@@ -1901,6 +1901,27 @@ impl Page {
         Ok(self)
     }
 
+    /// Performs a smooth click-and-drag: moves to `from` with a bezier path,
+    /// presses, drags along a bezier path to `to`, then releases.
+    pub async fn click_and_drag_smooth(&self, from: Point, to: Point) -> Result<&Self> {
+        self.inner.click_and_drag_smooth(from, to, 0).await?;
+        Ok(self)
+    }
+
+    /// Performs a smooth click-and-drag with keyboard modifiers:
+    /// Alt = 1, Ctrl = 2, Meta/Command = 4, Shift = 8 (default: 0).
+    pub async fn click_and_drag_smooth_with_modifier(
+        &self,
+        from: Point,
+        to: Point,
+        modifiers: i64,
+    ) -> Result<&Self> {
+        self.inner
+            .click_and_drag_smooth(from, to, modifiers)
+            .await?;
+        Ok(self)
+    }
+
     /// Performs a click-and-drag mouse event from a starting point to a destination,
     /// with optional keyboard modifiers: Alt = 1, Ctrl = 2, Meta/Command = 4, Shift = 8 (default: 0).
     ///
@@ -1972,6 +1993,27 @@ impl Page {
     pub async fn move_mouse(&self, point: Point) -> Result<&Self> {
         self.inner.move_mouse(point).await?;
         Ok(self)
+    }
+
+    /// Moves the mouse to `target` along a human-like bezier curve path,
+    /// dispatching intermediate `mouseMoved` events with natural timing.
+    ///
+    /// This produces realistic cursor movement with acceleration, deceleration,
+    /// slight curvature, optional overshoot, and per-step jitter.
+    pub async fn move_mouse_smooth(&self, target: Point) -> Result<&Self> {
+        self.inner.move_mouse_smooth(target).await?;
+        Ok(self)
+    }
+
+    /// Move smoothly to `point` with human-like movement, then perform a click.
+    pub async fn click_smooth(&self, point: Point) -> Result<&Self> {
+        self.inner.click_smooth(point).await?;
+        Ok(self)
+    }
+
+    /// Returns the current tracked mouse position.
+    pub fn mouse_position(&self) -> Point {
+        self.inner.mouse_position()
     }
 
     /// Uses the `DispatchKeyEvent` mechanism to simulate pressing keyboard

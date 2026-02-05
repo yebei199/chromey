@@ -81,6 +81,7 @@ pub mod js;
 pub mod keys;
 pub mod layout;
 pub mod listeners;
+pub mod mouse;
 pub mod page;
 pub mod utils;
 
