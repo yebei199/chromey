@@ -7,7 +7,7 @@
 
 use crate::layout::Point;
 use rand::Rng;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Configuration for smart mouse movement behavior.
@@ -202,19 +202,32 @@ pub fn generate_path(from: Point, to: Point, config: &SmartMouseConfig) -> Vec<M
 
 /// Tracks the current mouse position and generates human-like movement paths.
 ///
-/// Use this alongside CDP `Input.dispatchMouseEvent` calls so that every
-/// movement starts from the real cursor location instead of teleporting.
-#[derive(Debug)]
+/// Uses lock-free atomics for interior mutability — safe to use behind `Arc`
+/// and `&self` references without any mutex. Use this alongside CDP
+/// `Input.dispatchMouseEvent` calls so that every movement starts from
+/// the real cursor location instead of teleporting.
 pub struct SmartMouse {
-    position: Mutex<Point>,
+    pos_x: AtomicU64,
+    pos_y: AtomicU64,
     config: SmartMouseConfig,
+}
+
+impl std::fmt::Debug for SmartMouse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pos = self.position();
+        f.debug_struct("SmartMouse")
+            .field("position", &pos)
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 impl SmartMouse {
     /// Create a new `SmartMouse` starting at (0, 0) with default configuration.
     pub fn new() -> Self {
         Self {
-            position: Mutex::new(Point::new(0.0, 0.0)),
+            pos_x: AtomicU64::new(0.0_f64.to_bits()),
+            pos_y: AtomicU64::new(0.0_f64.to_bits()),
             config: SmartMouseConfig::default(),
         }
     }
@@ -222,19 +235,24 @@ impl SmartMouse {
     /// Create a `SmartMouse` with custom configuration.
     pub fn with_config(config: SmartMouseConfig) -> Self {
         Self {
-            position: Mutex::new(Point::new(0.0, 0.0)),
+            pos_x: AtomicU64::new(0.0_f64.to_bits()),
+            pos_y: AtomicU64::new(0.0_f64.to_bits()),
             config,
         }
     }
 
     /// Get the current tracked mouse position.
     pub fn position(&self) -> Point {
-        *self.position.lock().unwrap()
+        Point {
+            x: f64::from_bits(self.pos_x.load(Ordering::Relaxed)),
+            y: f64::from_bits(self.pos_y.load(Ordering::Relaxed)),
+        }
     }
 
     /// Set the mouse position directly (e.g., after a teleport or click).
     pub fn set_position(&self, point: Point) {
-        *self.position.lock().unwrap() = point;
+        self.pos_x.store(point.x.to_bits(), Ordering::Relaxed);
+        self.pos_y.store(point.y.to_bits(), Ordering::Relaxed);
     }
 
     /// Get the movement configuration.
@@ -247,12 +265,8 @@ impl SmartMouse {
     /// This updates the tracked position to `target` and returns a series of
     /// [`MovementStep`]s for dispatching intermediate `MouseMoved` events.
     pub fn path_to(&self, target: Point) -> Vec<MovementStep> {
-        let from = {
-            let mut pos = self.position.lock().unwrap();
-            let from = *pos;
-            *pos = target;
-            from
-        };
+        let from = self.position();
+        self.set_position(target);
         generate_path(from, target, &self.config)
     }
 }
