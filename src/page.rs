@@ -13,7 +13,8 @@ use chromiumoxide_cdp::cdp::browser_protocol::input::{
     DispatchDragEventType, DispatchMouseEventParams, DispatchMouseEventType, DragData, MouseButton,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
-    Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, SetBlockedUrLsParams,
+    BlockPattern, Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams,
+    SetBlockedUrLsParams,
     SetCookiesParams, SetExtraHttpHeadersParams, SetUserAgentOverrideParams, TimeSinceEpoch,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
@@ -1147,12 +1148,6 @@ impl Page {
             .full_version_lists(full_versions)
             .platform(ua_data.platform)
             .mobile(ua_data.mobile);
-
-        let user_agent_metadata_builder = if !ua_data.ua_full_version.is_empty() {
-            user_agent_metadata_builder.full_version(ua_data.ua_full_version)
-        } else {
-            user_agent_metadata_builder
-        };
 
         let user_agent_metadata_builder = if windows {
             user_agent_metadata_builder.wow64(ua_data.wow64_ness)
@@ -2521,7 +2516,14 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Network#method-setBlockedURLs
     pub async fn set_blocked_urls(&self, urls: Vec<String>) -> Result<&Self> {
-        self.send_command(SetBlockedUrLsParams::new(urls)).await?;
+        self.send_command(SetBlockedUrLsParams {
+            url_patterns: Some(
+                urls.into_iter()
+                    .map(|u| BlockPattern::new(u, true))
+                    .collect(),
+            ),
+        })
+        .await?;
         Ok(self)
     }
 
@@ -2539,8 +2541,10 @@ impl Page {
     ///
     /// See https://chromedevtools.github.io/devtools-protocol/tot/Network#method-setBlockedURLs
     pub async fn block_all_urls(&self) -> Result<&Self> {
-        self.send_command(SetBlockedUrLsParams::new(vec!["*".into()]))
-            .await?;
+        self.send_command(SetBlockedUrLsParams {
+            url_patterns: Some(vec![BlockPattern::new("*", true)]),
+        })
+        .await?;
         Ok(self)
     }
 

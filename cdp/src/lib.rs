@@ -29,7 +29,7 @@ pub mod revision;
 // is generally a good idea.
 
 /// Currently built CDP revision. The last stable version was 1354347.
-pub const CURRENT_REVISION: Revision = Revision(1457408);
+pub const CURRENT_REVISION: Revision = Revision(1581282);
 
 /// convenience fixups
 impl Default for CreateTargetParams {

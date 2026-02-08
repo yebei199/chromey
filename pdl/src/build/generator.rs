@@ -650,7 +650,7 @@ impl Generator {
                     self.generate_field_type(domain, dt.name(), dt.name(), &tydef.extends);
                 self.store_size(&struct_ident, size);
                 let struct_def = quote! {
-                    pub struct #name( #wrapped_ty);
+                    pub struct #name(pub #wrapped_ty);
 
                     impl #name {
 

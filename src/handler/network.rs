@@ -15,10 +15,10 @@ use aho_corasick::AhoCorasick;
 use case_insensitive_string::CaseInsensitiveString;
 use chromiumoxide_cdp::cdp::browser_protocol::fetch::{RequestPattern, RequestStage};
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
-    EmulateNetworkConditionsParams, EventLoadingFailed, EventLoadingFinished,
+    EmulateNetworkConditionsByRuleParams, EventLoadingFailed, EventLoadingFinished,
     EventRequestServedFromCache, EventRequestWillBeSent, EventResponseReceived, Headers,
-    InterceptionId, RequestId, ResourceType, Response, SetCacheDisabledParams,
-    SetExtraHttpHeadersParams,
+    InterceptionId, NetworkConditions, RequestId, ResourceType, Response,
+    SetCacheDisabledParams, SetExtraHttpHeadersParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::{
     fetch::{
@@ -1223,11 +1223,17 @@ impl NetworkManager {
             return;
         }
         self.offline = value;
-        if let Ok(network) = EmulateNetworkConditionsParams::builder()
+        if let Ok(network) = EmulateNetworkConditionsByRuleParams::builder()
             .offline(self.offline)
-            .latency(0)
-            .download_throughput(-1.)
-            .upload_throughput(-1.)
+            .matched_network_condition(
+                NetworkConditions::builder()
+                    .url_pattern("")
+                    .latency(0)
+                    .download_throughput(-1.)
+                    .upload_throughput(-1.)
+                    .build()
+                    .unwrap(),
+            )
             .build()
         {
             self.push_cdp_request(network);

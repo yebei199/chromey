@@ -4,6 +4,33 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Resolve `include domains/X.pdl` directives by fetching each referenced file
+/// and inlining its contents. Newer versions of the devtools-protocol repository
+/// split browser_protocol.pdl into per-domain files under `pdl/domains/`.
+fn resolve_pdl_includes(content: &str, base_url: &str) -> String {
+    let mut resolved = String::with_capacity(content.len() * 2);
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(path) = trimmed.strip_prefix("include ") {
+            let url = format!("{}/{}", base_url, path.trim());
+            match ureq::get(&url).call() {
+                Ok(resp) => {
+                    let domain_content = resp.into_string().unwrap();
+                    resolved.push_str(&domain_content);
+                    resolved.push('\n');
+                }
+                Err(e) => {
+                    eprintln!("warning: skipping missing include {path}: {e}");
+                }
+            }
+        } else {
+            resolved.push_str(line);
+            resolved.push('\n');
+        }
+    }
+    resolved
+}
+
 /// Check that the generated files are up to date and if not perform the updates.
 #[ignore]
 #[test]
@@ -47,24 +74,28 @@ fn pdl_is_fresh() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| dir.join("browser_protocol.pdl"));
 
-    let js_proto_old = fs::read_to_string(&js_proto).unwrap();
-    let js_proto_new = ureq::get(&format!(
-        "https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/{}/pdl/js_protocol.pdl",
+    let base_url = format!(
+        "https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/{}/pdl",
         CURRENT_REVISION
-    ))
-    .call()
-    .unwrap()
-    .into_string()
-    .unwrap();
-    assert!(js_proto_new.contains("The Chromium Authors"));
+    );
 
-    let browser_proto_old = fs::read_to_string(&browser_proto).unwrap();
-    let browser_proto_new = ureq::get(&format!("https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/{}/pdl/browser_protocol.pdl", CURRENT_REVISION))
+    let js_proto_old = fs::read_to_string(&js_proto).unwrap();
+    let js_proto_new = ureq::get(&format!("{}/js_protocol.pdl", base_url))
         .call()
         .unwrap()
         .into_string()
         .unwrap();
-    assert!(browser_proto_new.contains("The Chromium Authors"));
+    assert!(js_proto_new.contains("The Chromium Authors"));
+
+    let browser_proto_old = fs::read_to_string(&browser_proto).unwrap();
+    let browser_proto_raw = ureq::get(&format!("{}/browser_protocol.pdl", base_url))
+        .call()
+        .unwrap()
+        .into_string()
+        .unwrap();
+    assert!(browser_proto_raw.contains("The Chromium Authors"));
+    // Resolve `include domains/X.pdl` directives into a single flat file
+    let browser_proto_new = resolve_pdl_includes(&browser_proto_raw, &base_url);
 
     if js_proto_new != js_proto_old || browser_proto_new != browser_proto_old {
         fs::write(js_proto, js_proto_new).unwrap();
