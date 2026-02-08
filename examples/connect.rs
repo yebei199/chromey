@@ -40,9 +40,7 @@ async fn test_connect(target: &str) -> Result<(), Box<dyn std::error::Error>> {
         .goto(NavigateParams {
             url: target.into(),
             frame_id,
-            referrer: None,
-            transition_type: None,
-            referrer_policy: None,
+            ..Default::default()
         })
         .await?;
     let html = page.wait_for_navigation().await?.content().await?;

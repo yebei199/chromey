@@ -550,6 +550,7 @@ impl Generator {
                 deprecated: false,
                 is_enum: false,
                 serde_skip: true,
+                non_defaultable: false,
             };
 
             let def = field.field_definition();
@@ -610,6 +611,12 @@ impl Generator {
                 param.r#type.is_enum()
             };
 
+            // Binary, Enum, and Ref types may not implement Default
+            let non_defaultable = matches!(
+                &param.r#type,
+                Type::Binary | Type::Enum(_) | Type::Ref(_)
+            );
+
             let field = FieldDefinition {
                 name: param.name().to_string(),
                 name_ident: field_name,
@@ -618,6 +625,7 @@ impl Generator {
                 deprecated: param.is_deprecated(),
                 is_enum,
                 serde_skip: false,
+                non_defaultable,
             };
 
             builder
@@ -627,10 +635,10 @@ impl Generator {
 
         self.apply_struct_fixup(&mut builder, dt);
 
-        let derives = if !builder.has_mandatory_types() {
-            quote! { #[derive(Debug, Clone, PartialEq, Default)]}
+        let derives = if !builder.has_non_defaultable_mandatory_types() {
+            quote! { #[derive(Debug, Clone, PartialEq, Default)] }
         } else {
-            quote! {#[derive(Debug, Clone, PartialEq)] }
+            quote! { #[derive(Debug, Clone, PartialEq)] }
         };
 
         let serde_derives = self.serde_support.generate_derives();

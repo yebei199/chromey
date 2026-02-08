@@ -2,7 +2,6 @@ use std::fmt;
 
 use crate::cdp::browser_protocol::fetch;
 use crate::cdp::browser_protocol::network::{self, CookieParam, DeleteCookiesParams};
-use crate::cdp::browser_protocol::target::CreateTargetParams;
 use crate::cdp::js_protocol::runtime::{
     CallFunctionOnParams, EvaluateParams, ExceptionDetails, StackTrace,
 };
@@ -32,11 +31,8 @@ pub mod revision;
 pub const CURRENT_REVISION: Revision = Revision(1581282);
 
 /// convenience fixups
-impl Default for CreateTargetParams {
-    fn default() -> Self {
-        "about:blank".into()
-    }
-}
+/// Note: use `CreateTargetParams::from("about:blank")` for blank targets.
+/// The derived Default uses an empty URL.
 
 /// RequestId conversion
 
