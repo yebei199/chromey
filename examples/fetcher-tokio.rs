@@ -7,7 +7,7 @@ use chromiumoxide::fetcher::{BrowserFetcher, BrowserFetcherOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Fetcher browser
+    // Fetch browser (defaults to Chrome for Testing, Stable channel)
     let download_path = Path::new("./download");
     tokio::fs::create_dir_all(&download_path).await?;
     let fetcher = BrowserFetcher::new(

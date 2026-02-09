@@ -1,29 +1,25 @@
-pub use self::browser::{BrowserFetcher, BrowserFetcherOptions, BrowserFetcherRevisionInfo};
+pub use self::build_info::BuildInfo;
 pub use self::error::FetcherError;
+pub use self::fetcher::{BrowserFetcher, BrowserFetcherInstallation, BrowserFetcherOptions};
+pub use self::host::BrowserHost;
+pub use self::kind::BrowserKind;
 pub use self::platform::Platform;
-pub use self::revision::Revision;
+use self::runtime::Runtime;
+pub use self::version::{BrowserVersion, Channel, Milestone, Revision, Version, VersionError};
 
-// The chromium revision is hard to get right and the relation to the CDP revision
-// even more so, so here are some guidances.
-//
-// We used to use the revision of Puppeteer, but they switched to chrome-for-testing.
-// This means we have to check things ourself. The chromium revision should at least
-// as great as the CDP revision otherwise they won't be compatible.
-// Not all revisions of chromium have builds for all platforms.
-//
-// This is essentially a bruteforce process. You can use the test `find_revision_available`
-// to find a revision that is available for all platforms. We recommend setting the `min`
-// to the current CDP revision and the max to max revision of stable chromium.
-// See https://chromiumdash.appspot.com/releases for the latest stable revision.
-//
-// In general, we should also try to ship as close as a stable version of chromium if possible.
-// The CDP should also be a bit older than that stable version.
-// To map a revision to a chromium version you can use the site https://chromiumdash.appspot.com/commits.
+/// Backward-compatible alias for [`BrowserFetcherInstallation`].
+pub type BrowserFetcherRevisionInfo = BrowserFetcherInstallation;
 
-/// Currently downloaded chromium revision
-pub const CURRENT_REVISION: Revision = Revision(1355984);
+/// Currently downloaded chromium revision (legacy).
+///
+/// Prefer using `BrowserKind::Chrome` with `Channel::Stable` for Chrome for Testing.
+pub const CURRENT_REVISION: Revision = Revision::new(1355984);
 
-mod browser;
+mod build_info;
 mod error;
+mod fetcher;
+mod host;
+mod kind;
 mod platform;
-mod revision;
+mod runtime;
+mod version;

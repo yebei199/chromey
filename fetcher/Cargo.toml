@@ -1,13 +1,13 @@
 [package]
 name = "spider_chromiumoxide_fetcher"
-version = "0.7.4"
+version = "0.8.0"
 authors = ["Matthias Seitz <matthias.seitz@outlook.de>", "j-mendez <jeff@spider.cloud>"]
 edition = "2021"
 rust-version = "1.70"
 license = "MIT OR Apache-2.0"
-description = "Contains a chromium fetcher"
-homepage = "https://github.com/mattsse/chromiumoxide"
-repository = "https://github.com/mattsse/chromiumoxide"
+description = "Contains a chromium and chrome for testing fetcher"
+homepage = "https://github.com/spider-rs/chromey"
+repository = "https://github.com/spider-rs/chromey"
 readme = "../README.md"
 include = ["src/**/*", "LICENSE-*"]
 
@@ -16,16 +16,20 @@ name = "chromiumoxide_fetcher"
 
 [dev-dependencies]
 ureq = "2.10.0"
+reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
+tokio = { version = "1", features = ["rt", "fs", "macros"] }
+serde_json = "1"
 
 [dependencies]
 thiserror = "1"
 anyhow = "1"
 directories = "5"
+serde = { version = "1", features = ["derive"] }
 os_info = { version = "3", default-features = false }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 async-std = { version = "1.5", features = ["unstable"], optional = true }
 tokio = { version = "1", features = ["fs"], optional = true }
-reqwest = { version = "0.12", default-features = false, optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
 surf = { version = "2.3", default-features = false, optional = true }
 
 [features]
