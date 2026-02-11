@@ -497,16 +497,27 @@ pub fn site_key_for_target_url(target_url: &str, auth: Option<&str>) -> String {
 }
 
 /// Returns true if the body should NOT be cached (empty, near-empty, or known-bad HTML).
+///
+/// HTML-specific heuristics (empty `<body>`, skeleton pages) are only applied
+/// when the content looks like HTML (starts with `<`).  Non-HTML assets such as
+/// JSON, images, CSS, JS, fonts, etc. short-circuit after the basic
+/// empty / whitespace check.
 #[inline]
 fn is_body_empty_for_cache(body: &[u8]) -> bool {
     if body.is_empty() {
         return true;
     }
     let trimmed = body.trim_ascii();
-    if trimmed.is_empty()
-        || trimmed == b"<html><head></head><body></body></html>"
-        || trimmed == b"<html></html>"
-    {
+    if trimmed.is_empty() {
+        return true;
+    }
+    // Non-HTML content: if it doesn't start with '<' it's not markup —
+    // skip the HTML-specific heuristics entirely.
+    if trimmed[0] != b'<' {
+        return false;
+    }
+    // --- HTML-specific checks ---
+    if trimmed == b"<html><head></head><body></body></html>" || trimmed == b"<html></html>" {
         return true;
     }
     // Detect pages with HTML structure but empty <body> (small pages only)
