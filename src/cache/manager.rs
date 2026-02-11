@@ -297,6 +297,11 @@ pub async fn put_hybrid_cache(
     use http_cache_reqwest::CacheManager;
     use http_cache_semantics::CachePolicy;
 
+    // Never cache empty or near-empty HTML responses.
+    if is_body_empty_for_cache(&http_response.body) {
+        return;
+    }
+
     // We need to do everything that only borrows `http_response` *before*
     // we move it into CACACHE_MANAGER::put.
     if let Ok(u) = http_response.url.as_str().parse::<http::uri::Uri>() {
@@ -489,6 +494,43 @@ pub fn site_key_for_target_url(target_url: &str, auth: Option<&str>) -> String {
     };
     let input = format!("v1|url={}|auth={}", normalized, auth.unwrap_or(""));
     hex::encode(blake3::hash(input.as_bytes()).as_bytes()) // 64 hex chars, path-safe
+}
+
+/// Returns true if the body should NOT be cached (empty, near-empty, or known-bad HTML).
+#[inline]
+fn is_body_empty_for_cache(body: &[u8]) -> bool {
+    if body.is_empty() {
+        return true;
+    }
+    let trimmed = body.trim_ascii();
+    if trimmed.is_empty()
+        || trimmed == b"<html><head></head><body></body></html>"
+        || trimmed == b"<html></html>"
+    {
+        return true;
+    }
+    // Detect pages with HTML structure but empty <body> (small pages only)
+    if trimmed.len() <= 2048 {
+        let lower: Vec<u8> = trimmed.iter().map(|c| c.to_ascii_lowercase()).collect();
+        if let Some(body_open) = lower.windows(5).position(|w| w == b"<body") {
+            if let Some(gt) = lower[body_open..].iter().position(|&c| c == b'>') {
+                let content_start = body_open + gt + 1;
+                if let Some(close) = lower[content_start..]
+                    .windows(7)
+                    .position(|w| w == b"</body>")
+                {
+                    let content_end = content_start + close;
+                    if trimmed[content_start..content_end]
+                        .iter()
+                        .all(|c| c.is_ascii_whitespace())
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Default method for responses.
