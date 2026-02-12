@@ -323,25 +323,21 @@ pub async fn put_hybrid_cache(
         tracing::debug!("Storing cache {:?}", http_response.url.as_str());
 
         if dump_remote.is_some() {
-            // check if the value is in the cache and not stale to dump it
+            // Check whether a fresh (non-stale) entry already exists in the
+            // local cache.  If it does we can skip the remote dump.  In every
+            // other case — no entry, stale entry, lookup error, or timeout —
+            // we proceed with the dump.
             let result = tokio::time::timeout(std::time::Duration::from_millis(250), async {
                 CACACHE_MANAGER.get(&cache_key).await
             })
             .await;
 
-            let mut put_cache = false;
+            let already_fresh = matches!(
+                result,
+                Ok(Ok(Some((_, ref stored_policy)))) if !stored_policy.is_stale(SystemTime::now())
+            );
 
-            if let Ok(cached) = result {
-                if let Ok(Some((_http_response, stored_policy))) = cached {
-                    if stored_policy.is_stale(SystemTime::now()) {
-                        put_cache = true;
-                    }
-                }
-            } else {
-                put_cache = true;
-            }
-
-            if put_cache {
+            if !already_fresh {
                 let url = http_response.url.to_string();
                 let method = method.to_string();
                 let current_url = format!("{}:{}", &method, &url);
@@ -381,19 +377,28 @@ pub async fn put_hybrid_cache(
             }
         }
 
+        // Build the http_cache_reqwest response for both local cache and session cache.
+        let session_key = format!("{}:{}", method, http_response.url);
+        let cached_response = http_cache_reqwest::HttpResponse {
+            url: http_response.url,
+            body: http_response.body,
+            headers: http_response.headers,
+            version: http_response.version.into(),
+            status: http_response.status,
+        };
+
+        // Populate the session cache so the handler-level interceptor can
+        // serve this resource on subsequent requests in the same session.
+        crate::cache::remote::session_cache_insert(
+            cache_site,
+            cached_response.clone(),
+            policy.clone(),
+            &session_key,
+        );
+
         // Finally, store in your existing local cache.
         let _ = CACACHE_MANAGER
-            .put(
-                cache_key.into(),
-                http_cache_reqwest::HttpResponse {
-                    url: http_response.url,
-                    body: http_response.body,
-                    headers: http_response.headers,
-                    version: http_response.version.into(),
-                    status: http_response.status,
-                },
-                policy,
-            )
+            .put(cache_key.into(), cached_response, policy)
             .await;
     }
 }
@@ -587,6 +592,10 @@ async fn handle_single_response(
             body_ret.body.clone().into_bytes()
         };
 
+        if is_body_empty_for_cache(&body_bytes) {
+            return Ok(());
+        }
+
         let resp_headers: HashMap<String, String> = headers_to_string_map(&ev.response.headers);
 
         let req_headers: HashMap<String, String> = ev
@@ -605,6 +614,42 @@ async fn handle_single_response(
         };
 
         let cache_key = create_cache_key_raw(url.as_str(), Some(DEFAULT_METHOD), auth);
+
+        // Populate the session cache so the handler-level interceptor can
+        // serve this resource on subsequent navigations in the same session,
+        // and so the dedup check at the top of this function works.
+        {
+            let parsed_url =
+                url::Url::parse(url.as_str()).unwrap_or_else(|_| url::Url::parse("http://localhost").unwrap());
+
+            let uri: http::uri::Uri = url.as_str().parse().unwrap_or_default();
+
+            let req = HttpRequestLike {
+                uri,
+                method: http::method::Method::GET,
+                headers: convert_headers(&req_headers),
+            };
+            let res = HttpResponseLike {
+                status: StatusCode::from_u16(status).unwrap_or(StatusCode::EXPECTATION_FAILED),
+                headers: convert_headers(&resp_headers),
+            };
+            let policy = http_cache_semantics::CachePolicy::new(&req, &res);
+
+            let http_res = http_cache_reqwest::HttpResponse {
+                url: parsed_url,
+                body: body_bytes.clone(),
+                headers: resp_headers.clone(),
+                version: version.into(),
+                status,
+            };
+
+            crate::cache::remote::session_cache_insert(
+                cache_site,
+                http_res,
+                policy,
+                &current_url,
+            );
+        }
 
         let job = super::dump_remote::DumpJob {
             cache_key: cache_key,
