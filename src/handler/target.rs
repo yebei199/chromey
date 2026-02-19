@@ -685,9 +685,6 @@ impl Target {
                         }
                         TargetMessage::WaitForNavigation(tx) => {
                             if let Some(frame) = self.frame_manager.main_frame() {
-                                // TODO submit a navigation watcher: waitForFrameNavigation
-
-                                // TODO return the watchers navigationResponse
                                 if frame.is_loaded() {
                                     let _ = tx.send(frame.http_request().cloned());
                                 } else {

@@ -88,6 +88,7 @@ pub struct CdpJsonEventMessage {
     /// The session this event is meant for.
     pub session_id: Option<String>,
     /// Json payload of the event
+    #[serde(default)]
     pub params: serde_json::Value,
 }
 

@@ -851,3 +851,31 @@ impl AsRef<str> for LifecycleEvent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_lifecycle_events_cleared_on_loading_started() {
+        let mut frame = Frame::new(FrameId::new("test"));
+
+        // Simulate a loaded page.
+        frame.lifecycle_events.insert("load".into());
+        frame.lifecycle_events.insert("DOMContentLoaded".into());
+        assert!(frame.is_loaded());
+
+        // Browser fires FrameStartedLoading → on_loading_started clears lifecycle.
+        frame.on_loading_started();
+        assert!(!frame.is_loaded());
+    }
+
+    #[test]
+    fn frame_loading_stopped_inserts_load_events() {
+        let mut frame = Frame::new(FrameId::new("test"));
+        assert!(!frame.is_loaded());
+
+        frame.on_loading_stopped();
+        assert!(frame.is_loaded());
+    }
+}

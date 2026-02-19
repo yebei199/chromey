@@ -213,15 +213,16 @@ fn decode_message<T: EventMessage>(
         }
         Err(err) => {
             if let Some(txt) = raw_text_for_logging {
-                tracing::error!(
+                let preview = &txt[..txt.len().min(512)];
+                tracing::debug!(
                     target: "chromiumoxide::conn::raw_ws::parse_errors",
                     msg_len = txt.len(),
-                    "Failed to parse raw WS message {err}",
+                    "Skipping unrecognized WS message {err} preview={preview}",
                 );
             } else {
-                tracing::error!(
+                tracing::debug!(
                     target: "chromiumoxide::conn::raw_ws::parse_errors",
-                    "Failed to parse binary WS message {err}",
+                    "Skipping unrecognized binary WS message {err}",
                 );
             }
             Err(err.into())
@@ -251,15 +252,16 @@ fn decode_message<T: EventMessage>(
         }
         Err(err) => {
             if let Some(txt) = raw_text_for_logging {
-                tracing::error!(
+                let preview = &txt[..txt.len().min(512)];
+                tracing::debug!(
                     target: "chromiumoxide::conn::raw_ws::parse_errors",
                     msg_len = txt.len(),
-                    "Failed to parse raw WS message {err}",
+                    "Skipping unrecognized WS message {err} preview={preview}",
                 );
             } else {
-                tracing::error!(
+                tracing::debug!(
                     target: "chromiumoxide::conn::raw_ws::parse_errors",
-                    "Failed to parse binary WS message {err}",
+                    "Skipping unrecognized binary WS message {err}",
                 );
             }
             Err(err.into())
