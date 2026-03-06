@@ -373,10 +373,11 @@ async fn seed_payload_into_local_cache(
 
     let http_res = http_cache_reqwest::HttpResponse {
         url,
-        headers: payload.response_headers.clone(),
+        headers: http_cache::HttpHeaders::Modern(crate::http::headers_to_multi(&payload.response_headers)),
         version: payload.http_version.into(),
         status: payload.status,
         body,
+        metadata: None,
     };
 
     let key = payload.resource_key.clone();

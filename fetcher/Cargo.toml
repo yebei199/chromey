@@ -16,7 +16,7 @@ name = "chromiumoxide_fetcher"
 
 [dev-dependencies]
 ureq = "2.10.0"
-reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
+reqwest = { version = "0.13", features = ["rustls-tls", "json"], default-features = false }
 tokio = { version = "1", features = ["rt", "fs", "macros"] }
 serde_json = "1"
 
@@ -29,7 +29,7 @@ os_info = { version = "3", default-features = false }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 async-std = { version = "1.5", features = ["unstable"], optional = true }
 tokio = { version = "1", features = ["fs"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["json"], optional = true }
 surf = { version = "2.3", default-features = false, optional = true }
 
 [features]
@@ -38,6 +38,6 @@ async-std-runtime = ["async-std", "surf"]
 tokio-runtime = ["tokio", "reqwest"]
 
 _rustls-async-std = ["surf/h1-client-rustls", "async-std-runtime"]
-_rustls-tokio = ["reqwest/rustls-tls", "tokio-runtime"]
+_rustls-tokio = ["reqwest/rustls", "tokio-runtime"]
 _native-async-std = ["surf/h1-client", "async-std-runtime"]
 _native-tokio = ["reqwest/native-tls", "tokio-runtime"]

@@ -272,7 +272,8 @@ pub async fn get_cached_url_with_metadata(
             };
 
             if allow {
-                return Some((http_response.body, http_response.headers));
+                let headers = crate::http::headers_from_multi(&http_response.headers);
+                return Some((http_response.body, headers));
             }
         }
     }
@@ -382,9 +383,10 @@ pub async fn put_hybrid_cache(
         let cached_response = http_cache_reqwest::HttpResponse {
             url: http_response.url,
             body: http_response.body,
-            headers: http_response.headers,
+            headers: http_cache::HttpHeaders::Modern(crate::http::headers_to_multi(&http_response.headers)),
             version: http_response.version.into(),
             status: http_response.status,
+            metadata: None,
         };
 
         // Populate the session cache so the handler-level interceptor can
@@ -638,9 +640,10 @@ async fn handle_single_response(
             let http_res = http_cache_reqwest::HttpResponse {
                 url: parsed_url,
                 body: body_bytes.clone(),
-                headers: resp_headers.clone(),
+                headers: http_cache::HttpHeaders::Modern(crate::http::headers_to_multi(&resp_headers)),
                 version: version.into(),
                 status,
+                metadata: None,
             };
 
             crate::cache::remote::session_cache_insert(

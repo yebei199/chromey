@@ -142,6 +142,30 @@ impl ResponseLike for HttpResponseLike {
     }
 }
 
+/// Convert single-value headers map into multi-value headers map for http-cache 1.x.
+#[cfg(feature = "_cache")]
+pub fn headers_to_multi(
+    headers: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, Vec<String>> {
+    headers
+        .iter()
+        .map(|(k, v)| (k.clone(), vec![v.clone()]))
+        .collect()
+}
+
+/// Extract single-value headers from http-cache 1.x multi-value HttpHeaders.
+#[cfg(feature = "_cache")]
+pub fn headers_from_multi(
+    headers: &http_cache::HttpHeaders,
+) -> std::collections::HashMap<String, String> {
+    match headers {
+        http_cache::HttpHeaders::Modern(m) => m
+            .iter()
+            .map(|(k, v)| (k.clone(), v.first().cloned().unwrap_or_default()))
+            .collect(),
+    }
+}
+
 /// Convert headers to header map
 pub fn convert_headers(
     headers: &std::collections::HashMap<String, String>,

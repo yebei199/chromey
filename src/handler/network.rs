@@ -1012,10 +1012,11 @@ impl NetworkManager {
                                 &event.resource_type,
                                 &current_url
                             );
+                            let flat_headers = crate::http::headers_from_multi(&res.headers);
                             return self.fulfill_request_from_cache(
                                 &event.request_id,
                                 &res.body,
-                                &res.headers,
+                                &flat_headers,
                                 res.status as i64,
                             );
                         }
